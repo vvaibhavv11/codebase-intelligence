@@ -22,8 +22,17 @@ def get_openai_client() -> AsyncOpenAI:
     """Return an async OpenAI client for chat/completions (vcliproxy)."""
     return AsyncOpenAI(
         api_key=settings.openai_api_key,
-        base_url=settings.openai_api_base,
+        base_url=_normalize_base(settings.openai_api_base),
     )
+
+
+def _normalize_base(base_url: str) -> str:
+    """Ensure the base URL ends with /v1 so the OpenAI client hits
+    {base}/chat/completions instead of {base}/chat/completions 404ing."""
+    base_url = base_url.rstrip("/")
+    if not base_url.endswith("/v1"):
+        base_url += "/v1"
+    return base_url
 
 
 def get_embedding_client() -> AsyncOpenAI:
