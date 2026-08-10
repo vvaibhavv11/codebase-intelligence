@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+# uv.lock is committed for deterministic builds
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+next-env.d.ts
+
+# Misc
+.env
+.env.local
+.DS_Store
+*.log
+
+# Cloned repos
+backend/repos/
