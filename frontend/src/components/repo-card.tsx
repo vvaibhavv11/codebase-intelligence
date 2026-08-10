@@ -9,9 +9,10 @@ import {
   CheckCircle2,
   XCircle,
   AlertCircle,
+  Trash2,
 } from "lucide-react";
 import type { Repo } from "@/lib/api";
-import { triggerIndex } from "@/lib/api";
+import { triggerIndex, deleteRepo } from "@/lib/api";
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
@@ -51,6 +52,7 @@ const statusConfig: Record<
 export default function RepoCard({ repo }: { repo: Repo }) {
   const queryClient = useQueryClient();
   const [reindexing, setReindexing] = useState(false);
+  const [removing, setRemoving] = useState(false);
   const status = statusConfig[repo.status];
   const isInProgress = repo.status === "cloning" || repo.status === "indexing";
 
@@ -63,6 +65,21 @@ export default function RepoCard({ repo }: { repo: Repo }) {
       // silently ignore -- status will reflect error
     } finally {
       setReindexing(false);
+    }
+  }
+
+  async function handleRemove() {
+    const ok = window.confirm(
+      `Remove ${repo.owner}/${repo.name}? All indexed data for this repo will be deleted.`
+    );
+    if (!ok) return;
+    setRemoving(true);
+    try {
+      await deleteRepo(repo.id);
+      queryClient.invalidateQueries({ queryKey: ["repos"] });
+    } catch {
+      alert("Failed to remove repo. Please try again.");
+      setRemoving(false);
     }
   }
 
@@ -86,6 +103,14 @@ export default function RepoCard({ repo }: { repo: Repo }) {
           {status.icon}
           {status.label}
         </span>
+        <button
+          onClick={handleRemove}
+          disabled={removing}
+          title="Remove repo"
+          className="p-1.5 rounded-lg text-zinc-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors disabled:opacity-50"
+        >
+          <Trash2 className={`w-4 h-4 ${removing ? "animate-pulse" : ""}`} />
+        </button>
       </div>
 
       <div className="mt-4 flex items-center gap-4 text-xs text-zinc-500 dark:text-zinc-400">

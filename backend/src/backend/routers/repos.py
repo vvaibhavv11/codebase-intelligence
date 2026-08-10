@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import re
+import shutil
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -83,5 +85,9 @@ async def delete_repo(
     repo: Repository = Depends(require_repo),
     db: AsyncSession = Depends(get_db),
 ):
+    from backend.services.github import repo_dir_for
+
+    repo_dir = repo_dir_for(repo.user_id, repo.owner, repo.name)
     await db.delete(repo)
     await db.commit()
+    await asyncio.to_thread(shutil.rmtree, repo_dir, ignore_errors=True)
