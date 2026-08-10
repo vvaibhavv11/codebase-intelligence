@@ -11,6 +11,7 @@ from backend.models.dependency import Dependency
 from backend.models.file import File
 from backend.models.repository import Repository
 from backend.models.symbol import CodeSymbol
+from backend.routers.deps import require_repo
 from backend.schemas.graph import GraphNode, GraphEdge, GraphResponse
 
 router = APIRouter(tags=["dependencies"])
@@ -48,10 +49,11 @@ async def _file_paths(db: AsyncSession, repo_id: uuid.UUID) -> dict[uuid.UUID, s
 
 
 @router.get("/repos/{repo_id}/graph", response_model=GraphResponse)
-async def get_dependency_graph(repo_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
-    repo = await db.get(Repository, repo_id)
-    if not repo:
-        raise HTTPException(status_code=404, detail="Repository not found")
+async def get_dependency_graph(
+    repo: Repository = Depends(require_repo),
+    db: AsyncSession = Depends(get_db),
+):
+    repo_id = repo.id
 
     file_paths = await _file_paths(db, repo_id)
 
@@ -136,13 +138,17 @@ async def _related_nodes(
 
 @router.get("/repos/{repo_id}/symbols/{symbol_id}/dependents", response_model=list[GraphNode])
 async def get_dependents(
-    repo_id: uuid.UUID, symbol_id: uuid.UUID, db: AsyncSession = Depends(get_db)
+    symbol_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    repo: Repository = Depends(require_repo),
 ):
-    return await _related_nodes(db, repo_id, symbol_id, "dependents")
+    return await _related_nodes(db, repo.id, symbol_id, "dependents")
 
 
 @router.get("/repos/{repo_id}/symbols/{symbol_id}/dependencies", response_model=list[GraphNode])
 async def get_dependencies(
-    repo_id: uuid.UUID, symbol_id: uuid.UUID, db: AsyncSession = Depends(get_db)
+    symbol_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    repo: Repository = Depends(require_repo),
 ):
-    return await _related_nodes(db, repo_id, symbol_id, "dependencies")
+    return await _related_nodes(db, repo.id, symbol_id, "dependencies")

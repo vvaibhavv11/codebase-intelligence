@@ -37,7 +37,7 @@ MAX_AFFECTED_CODE_CHARS = 12_000
 # ---------------------------------------------------------------------------
 
 def get_repo_dir(repo: Repository) -> Path:
-    return settings.repos_path / f"{repo.owner}__{repo.name}"
+    return settings.repos_path / f"u{repo.user_id}" / f"{repo.owner}__{repo.name}"
 
 
 def _ensure_history(repo_dir: Path) -> Repo:

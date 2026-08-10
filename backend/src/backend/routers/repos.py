@@ -9,6 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.db import get_db
 from backend.models.repository import Repository, RepoStatus
+from backend.models.user import User
+from backend.routers.deps import get_current_user, require_repo
 from backend.schemas.repo import RepoConnect, RepoResponse, RepoListResponse
 
 router = APIRouter(tags=["repositories"])
@@ -24,15 +26,22 @@ def parse_github_url(url: str) -> tuple[str, str]:
 
 
 @router.post("/repos", response_model=RepoResponse, status_code=201)
-async def connect_repo(body: RepoConnect, db: AsyncSession = Depends(get_db)):
+async def connect_repo(
+    body: RepoConnect,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
     owner, name = parse_github_url(body.github_url)
 
     # Normalize URL
     github_url = f"https://github.com/{owner}/{name}"
 
-    # Check if already exists
+    # Check if already exists for this user
     existing = await db.execute(
-        select(Repository).where(Repository.github_url == github_url)
+        select(Repository).where(
+            Repository.user_id == user.id,
+            Repository.github_url == github_url,
+        )
     )
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=409, detail="Repository already connected")
@@ -42,6 +51,7 @@ async def connect_repo(body: RepoConnect, db: AsyncSession = Depends(get_db)):
         name=name,
         owner=owner,
         status=RepoStatus.pending,
+        user_id=user.id,
     )
     db.add(repo)
     await db.flush()
@@ -50,25 +60,28 @@ async def connect_repo(body: RepoConnect, db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/repos", response_model=RepoListResponse)
-async def list_repos(db: AsyncSession = Depends(get_db)):
+async def list_repos(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
     result = await db.execute(
-        select(Repository).order_by(Repository.created_at.desc())
+        select(Repository)
+        .where(Repository.user_id == user.id)
+        .order_by(Repository.created_at.desc())
     )
     repos = result.scalars().all()
     return RepoListResponse(repositories=repos)
 
 
 @router.get("/repos/{repo_id}", response_model=RepoResponse)
-async def get_repo(repo_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
-    repo = await db.get(Repository, repo_id)
-    if not repo:
-        raise HTTPException(status_code=404, detail="Repository not found")
+async def get_repo(repo: Repository = Depends(require_repo)):
     return repo
 
 
 @router.delete("/repos/{repo_id}", status_code=204)
-async def delete_repo(repo_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
-    repo = await db.get(Repository, repo_id)
-    if not repo:
-        raise HTTPException(status_code=404, detail="Repository not found")
+async def delete_repo(
+    repo: Repository = Depends(require_repo),
+    db: AsyncSession = Depends(get_db),
+):
     await db.delete(repo)
+    await db.commit()

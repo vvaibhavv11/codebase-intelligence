@@ -1,8 +1,32 @@
-import { Code2 } from "lucide-react";
+"use client";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { Code2, Loader2, LogIn } from "lucide-react";
+import { login, setAuth } from "@/lib/api";
 
 export default function LoginPage() {
+  const router = useRouter();
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setLoading(true);
+    try {
+      const { token, user } = await login(username.trim(), password);
+      setAuth(token, user.username);
+      router.push("/");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Login failed");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   return (
     <div className="flex flex-col items-center justify-center min-h-screen gap-6 px-4">
       <div className="flex items-center gap-3 mb-2">
@@ -12,18 +36,78 @@ export default function LoginPage() {
         </h1>
       </div>
       <p className="text-sm text-zinc-500 dark:text-zinc-400 text-center max-w-md">
-        Connect your GitHub account to browse, search, and chat with your
-        repositories using AI-powered semantic understanding.
+        Sign in to browse, search, and chat with your repositories using
+        AI-powered semantic understanding.
       </p>
-      <a
-        href={`${API_URL}/api/auth/github/login`}
-        className="inline-flex items-center gap-3 px-6 py-3 bg-zinc-900 dark:bg-white text-white dark:text-black rounded-xl font-medium hover:opacity-90 transition-opacity text-sm"
+
+      <form
+        onSubmit={handleSubmit}
+        className="w-full max-w-sm rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 p-6 shadow-lg flex flex-col gap-4"
       >
-        <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
-          <path d="M12 0C5.374 0 0 5.373 0 12c0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23A11.509 11.509 0 0112 5.803c1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z" />
-        </svg>
-        Continue with GitHub
-      </a>
+        <div>
+          <label
+            htmlFor="username"
+            className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-1"
+          >
+            Username
+          </label>
+          <input
+            id="username"
+            type="text"
+            autoComplete="username"
+            value={username}
+            onChange={(e) => {
+              setUsername(e.target.value);
+              setError(null);
+            }}
+            placeholder="admin"
+            className="w-full rounded-lg border border-zinc-300 dark:border-zinc-600 bg-white dark:bg-zinc-800 px-4 py-2.5 text-sm placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-shadow"
+          />
+        </div>
+
+        <div>
+          <label
+            htmlFor="password"
+            className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-1"
+          >
+            Password
+          </label>
+          <input
+            id="password"
+            type="password"
+            autoComplete="current-password"
+            value={password}
+            onChange={(e) => {
+              setPassword(e.target.value);
+              setError(null);
+            }}
+            placeholder="••••••••"
+            className="w-full rounded-lg border border-zinc-300 dark:border-zinc-600 bg-white dark:bg-zinc-800 px-4 py-2.5 text-sm placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-shadow"
+          />
+        </div>
+
+        {error && (
+          <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
+        )}
+
+        <button
+          type="submit"
+          disabled={loading || !username.trim() || !password}
+          className="inline-flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+        >
+          {loading ? (
+            <Loader2 className="w-4 h-4 animate-spin" />
+          ) : (
+            <LogIn className="w-4 h-4" />
+          )}
+          {loading ? "Signing in..." : "Sign in"}
+        </button>
+      </form>
+
+      <p className="text-xs text-zinc-500 dark:text-zinc-400">
+        Default login: <span className="font-medium">admin</span> /{" "}
+        <span className="font-medium">admin</span>
+      </p>
     </div>
   );
 }

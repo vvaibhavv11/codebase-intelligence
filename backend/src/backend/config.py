@@ -22,20 +22,16 @@ class Settings(BaseSettings):
     openai_embedding_api_key: str = ""
     openai_embedding_model: str = "nvidia/nemotron-3-embed-1b"
 
-    # GitHub OAuth
-    github_client_id: str = ""
-    github_client_secret: str = ""
-
     # App
     secret_key: str = "change-me"
     frontend_url: str = "http://localhost:3000"
     backend_url: str = "http://localhost:8000"
-    repos_dir: str = "./repos"
+    repos_dir: str = "~/.derive"
     port: int = 8001
 
     @property
     def repos_path(self) -> Path:
-        p = Path(self.repos_dir)
+        p = Path(self.repos_dir).expanduser()
         p.mkdir(parents=True, exist_ok=True)
         return p
 

@@ -1,34 +1,26 @@
 from __future__ import annotations
 
-import uuid
-
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.db import get_db
 from backend.models.repository import Repository, RepoStatus
+from backend.routers.deps import require_repo
 
 router = APIRouter(tags=["indexing"])
 
 
 @router.post("/repos/{repo_id}/index")
 async def trigger_index(
-    repo_id: uuid.UUID,
-    background_tasks: BackgroundTasks,
-    db: AsyncSession = Depends(get_db),
+    repo: Repository = Depends(require_repo),
+    background_tasks: BackgroundTasks = BackgroundTasks(),
 ):
-    repo = await db.get(Repository, repo_id)
-    if not repo:
-        raise HTTPException(status_code=404, detail="Repository not found")
-
+    repo_id = repo.id
     if repo.status in (RepoStatus.cloning, RepoStatus.indexing):
         raise HTTPException(status_code=409, detail="Indexing already in progress")
 
-    repo.status = RepoStatus.cloning
-    repo.error_message = None
-    await db.flush()
-
-    # Run indexing in background
+    # NOTE: keep this endpoint read-only. The background task owns all status
+    # mutations and commits them itself; an uncommitted UPDATE here would hold
+    # a row lock the task blocks on while this request's post-yield commit is
+    # chained behind the task's execution (permanent deadlock).
     from backend.services.indexer import run_indexing
 
     background_tasks.add_task(run_indexing, repo_id)
@@ -37,11 +29,7 @@ async def trigger_index(
 
 
 @router.get("/repos/{repo_id}/index/status")
-async def index_status(repo_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
-    repo = await db.get(Repository, repo_id)
-    if not repo:
-        raise HTTPException(status_code=404, detail="Repository not found")
-
+async def index_status(repo: Repository = Depends(require_repo)):
     return {
         "repo_id": str(repo.id),
         "status": repo.status.value,

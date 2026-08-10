@@ -13,6 +13,8 @@ from sqlalchemy.orm import selectinload
 from backend.db import get_db
 from backend.models.repository import Repository, RepoStatus
 from backend.models.chat import ChatSession, ChatMessage
+from backend.models.user import User
+from backend.routers.deps import get_current_user, require_repo
 from backend.schemas.chat import (
     ChatRequest,
     ChatSessionResponse,
@@ -26,9 +28,13 @@ router = APIRouter(tags=["chat"])
 
 
 @router.post("/chat")
-async def chat(body: ChatRequest, db: AsyncSession = Depends(get_db)):
+async def chat(
+    body: ChatRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
     repo = await db.get(Repository, body.repo_id)
-    if not repo:
+    if not repo or repo.user_id != user.id:
         raise HTTPException(status_code=404, detail="Repository not found")
     if repo.status != RepoStatus.ready:
         raise HTTPException(status_code=400, detail="Repository not yet indexed")
@@ -36,7 +42,7 @@ async def chat(body: ChatRequest, db: AsyncSession = Depends(get_db)):
     # Get or create session
     if body.session_id:
         session = await db.get(ChatSession, body.session_id)
-        if not session:
+        if not session or session.repo_id != repo.id:
             raise HTTPException(status_code=404, detail="Chat session not found")
     else:
         session = ChatSession(repo_id=body.repo_id, title=body.message[:100])
@@ -88,6 +94,7 @@ async def chat(body: ChatRequest, db: AsyncSession = Depends(get_db)):
 async def list_sessions(
     repo_id: uuid.UUID = Query(...),
     db: AsyncSession = Depends(get_db),
+    _repo: Repository = Depends(require_repo),
 ):
     result = await db.execute(
         select(ChatSession)
@@ -99,7 +106,11 @@ async def list_sessions(
 
 
 @router.get("/chat/sessions/{session_id}", response_model=ChatSessionResponse)
-async def get_session(session_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+async def get_session(
+    session_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
     result = await db.execute(
         select(ChatSession)
         .where(ChatSession.id == session_id)
@@ -107,5 +118,9 @@ async def get_session(session_id: uuid.UUID, db: AsyncSession = Depends(get_db))
     )
     session = result.scalar_one_or_none()
     if not session:
+        raise HTTPException(status_code=404, detail="Chat session not found")
+
+    repo = await db.get(Repository, session.repo_id)
+    if not repo or repo.user_id != user.id:
         raise HTTPException(status_code=404, detail="Chat session not found")
     return session

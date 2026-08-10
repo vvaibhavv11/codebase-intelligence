@@ -17,10 +17,28 @@ async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
         await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
 
+    await seed_default_user()
+
     yield
 
     # Shutdown
     await engine.dispose()
+
+
+async def seed_default_user() -> None:
+    """Ensure the default admin user exists (admin / admin)."""
+    from sqlalchemy import select
+
+    from backend.db import async_session
+    from backend.models.user import User
+    from backend.services.auth import hash_password
+
+    async with async_session() as db:
+        result = await db.execute(select(User).where(User.username == "admin"))
+        if result.scalar_one_or_none():
+            return
+        db.add(User(username="admin", password_hash=hash_password("admin")))
+        await db.commit()
 
 
 app = FastAPI(

@@ -13,10 +13,10 @@ Connect a GitHub repo, index its source code with tree-sitter, search it semanti
 ## Architecture
 
 ```
-Next.js (Dashboard, Repo Browser, Code Viewer, AI Chat, Search, GitHub OAuth)
+Next.js (Dashboard, Repo Browser, Code Viewer, AI Chat, Search, Auth)
         │
         ▼
-FastAPI (repos CRUD, indexing trigger, file tree/content, semantic search, SSE chat, OAuth)
+FastAPI (repos CRUD, indexing trigger, file tree/content, semantic search, SSE chat, Auth)
         │
         ├── Tree-sitter (symbol extraction: functions/classes/methods + imports/calls/inheritance)
         ├── NVIDIA nemotron-3-embed-1b (embeddings, 2048 dims)
@@ -35,15 +35,62 @@ FastAPI (repos CRUD, indexing trigger, file tree/content, semantic search, SSE c
 | Pydantic schemas + all 9 routers | **Done** |
 | `services/github.py` (clone/pull/walk files) | **Done** |
 | `services/parser.py` (tree-sitter: symbols + imports/calls/inheritance) | **Done** |
-| `services/embeddings.py` (NVIDIA nemotron-3-embed-1b, 2048 dims) | **Done** |
+| `services/embeddings.py` (NVIDIA nemotron-3-embed-1b, 2048 dims, retry w/ backoff) | **Done** |
 | `services/indexer.py` (clone→parse→embed→store + dependency resolution) | **Done** |
 | `services/search.py` (pgvector cosine similarity) | **Done** |
 | `services/rag.py` (RAG chat + SSE streaming + impact analysis) | **Done** |
 | `services/diffs.py` (git commit history + LLM diff analysis) | **Done** |
 | `services/docs.py` (LLM doc generation + caching) | **Done** |
-| Frontend (dashboard, browser, viewer, chat, search, OAuth) | **Done** — builds clean |
+| Frontend (dashboard, browser, viewer, chat, search, login) | **Done** — builds clean |
 | Frontend Phase 2 (dependency graph, commit list, generated docs) | **Done** |
+| Production deployment (Vercel frontend + systemd backend on 8001 + nginx) | **Done** — see "Production" below |
 | End-to-end testing (index a real repo, verify all endpoints) | **TODO** |
+
+## Production
+
+Live deployment (as of Aug 2026):
+
+| Component | URL / Location |
+|---|---|
+| Frontend | **https://codebase-intelligence-jet.vercel.app** (Vercel project `codebase-intelligence`, vercel.com under vvaibhavv11) |
+| Backend API | **https://vuptime.duckdns.org** (nginx → `127.0.0.1:8001`) |
+| Backend health | `https://vuptime.duckdns.org/api/health` |
+| GitHub repo | `vvaibhavv11/codebase-intelligence` (public, branch `main`) |
+| Database | pgvector Postgres in Docker on the same host (`localhost:5432`) |
+
+### Backend process (systemd)
+
+The production backend runs as a systemd service named `codebase-intelligence`:
+
+```bash
+sudo systemctl status codebase-intelligence   # check status/logs
+sudo systemctl restart codebase-intelligence  # restart after .env changes
+sudo journalctl -u codebase-intelligence -f   # follow logs
+```
+
+- Executes `.venv/bin/uvicorn backend.main:app --host 0.0.0.0 --port 8001 --workers 1`
+- Working dir: `backend/`, reads `backend/.env`, auto-restarts on crash (`Restart=always`)
+- Runs on port **8001** (port 8000 is reserved for an older dev server / k.initqube.com)
+
+### nginx
+
+- `/etc/nginx/conf.d/vuptime.duckdns.org.conf` proxies `vuptime.duckdns.org` → `127.0.0.1:8001`
+- SSE streaming is enabled: `proxy_buffering off`, `proxy_cache off`, long `proxy_read_timeout`
+- Other reverse-proxied apps on this host: vcliproxyapi (8317), vforgejo (3000), vn8nv (5678), vopenclaw (9119), k.initqube.com (8000)
+
+### Deploying the frontend
+
+```bash
+cd frontend
+vercel --prod --build-env NEXT_PUBLIC_API_URL=https://vuptime.duckdns.org
+```
+
+`NEXT_PUBLIC_API_URL` is baked in at build time. After any change to it, redeploy.
+
+### Production caveats
+
+- All API endpoints require a Bearer token (username/password login, default `admin`/`admin`); **no rate limiting** — acceptable for initial release, revisit later
+- Repos are cloned to `~/.derive/u{user_id}/{owner}__{name}` on the host (not persisted in a volume) — it's the production host itself
 
 ## API Configuration
 
@@ -95,12 +142,14 @@ docker compose exec db psql -U codebase -d codebase_intelligence -c "\dt"
 
 ```bash
 cd backend
-cp ../.env.example .env       # fill in real values (API keys, GitHub OAuth)
+cp ../.env.example .env       # fill in real values (API keys)
 uv sync                       # Install deps into .venv (first time)
 uv run alembic upgrade head   # Apply migrations
-uv run python src/backend/main.py   # Run app on http://localhost:8000
+uv run python src/backend/main.py   # Run dev server on http://localhost:8001 (settings.port)
 uv add <package>              # Add a dependency
 ```
+
+> On the production host the backend runs as a systemd service (`codebase-intelligence`) on port **8001** — see "Production" above. Port 8000 belongs to an older dev server, do not use it.
 
 ### Frontend (bun)
 
@@ -137,7 +186,7 @@ bun run start                 # Serve production build
 │       └── services/         # github, parser, embeddings, indexer, search, rag, diffs, docs
 └── frontend/                 # Next.js app (bun)
     ├── src/
-    │   ├── app/              # App Router pages (dashboard, repo/[id], login, auth/callback)
+    │   ├── app/              # App Router pages (dashboard, repo/[id], login)
     │   ├── components/       # UI components (file-tree, code-viewer, chat-panel, search-bar,
     │   │                     #   dependency-graph, commit-list, generated-docs, repo-card, etc.)
     │   └── lib/api.ts        # Typed API client for all backend endpoints
@@ -154,6 +203,9 @@ bun run start                 # Serve production build
 - **Database**: PostgreSQL + pgvector only (Docker Compose); use Alembic for all schema changes — never hand-edit tables
 - **LLM chat**: OpenAI-compatible endpoint configured via `OPENAI_API_BASE`/`OPENAI_API_KEY` in `.env`
 - **Embeddings**: separate NVIDIA endpoint via `OPENAI_EMBEDDING_BASE`/`OPENAI_EMBEDDING_API_KEY` — 2048-dim vectors, cosine distance (`<=>`) for search, no ANN index
-- **Streaming**: chat responses stream via SSE (`text/event-stream`); frontend parses `data:` / `event: done` events
-- **Indexing runs as a FastAPI BackgroundTask** with its own DB session (`async_session`) — never reuse request-scoped sessions
+- **Streaming**: chat responses stream via SSE (`text/event-stream`); each `data:` payload is **JSON-encoded** (`{"text": "..."}`), errors use `event: error`, completion uses `event: done` — the frontend (`lib/api.ts`) JSON-parses every event
+- **CORS**: `FRONTEND_URL` in `.env` is a **comma-separated list** of allowed origins (e.g. `http://localhost:3000,https://codebase-intelligence-jet.vercel.app`)
+- **Indexing runs as a FastAPI BackgroundTask** with its own DB session (`async_session`) — never reuse request-scoped sessions; the error handler calls `db.rollback()` before setting `status=error`
+- **Embedding retries**: `services/embeddings.py` retries API calls with exponential backoff (5 attempts, batch size 50) to survive NVIDIA rate limits
+- **Git operations**: `clone_repo` / `walk_source_files` run inside `asyncio.to_thread()` in the indexer — never call them directly from async code
 - **Status enum**: `pending → cloning → indexing → ready` (or `error`), surfaced via `GET /api/repos/{id}/index/status`

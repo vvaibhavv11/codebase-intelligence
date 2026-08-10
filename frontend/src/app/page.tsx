@@ -7,6 +7,7 @@ import { listRepos } from "@/lib/api";
 import RepoCard from "@/components/repo-card";
 import ConnectRepoDialog from "@/components/connect-repo-dialog";
 import UserMenu from "@/components/user-menu";
+import AuthGuard from "@/components/auth-guard";
 
 export default function Home() {
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -17,7 +18,10 @@ export default function Home() {
     refetchInterval: (query) => {
       const data = query.state.data;
       return data?.some(
-        (r) => r.status === "cloning" || r.status === "indexing"
+        (r) =>
+          r.status === "pending" ||
+          r.status === "cloning" ||
+          r.status === "indexing"
       )
         ? 2000
         : false;
@@ -25,7 +29,8 @@ export default function Home() {
   });
 
   return (
-    <div className="flex-1 flex flex-col">
+    <AuthGuard>
+      <div className="flex-1 flex flex-col">
       {/* Header */}
       <header className="border-b border-zinc-200 dark:border-zinc-800 bg-white/80 dark:bg-zinc-900/80 backdrop-blur-sm sticky top-0 z-40">
         <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
@@ -85,6 +90,7 @@ export default function Home() {
         open={dialogOpen}
         onClose={() => setDialogOpen(false)}
       />
-    </div>
+      </div>
+    </AuthGuard>
   );
 }

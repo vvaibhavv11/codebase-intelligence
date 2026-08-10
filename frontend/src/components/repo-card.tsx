@@ -8,7 +8,6 @@ import {
   Loader2,
   CheckCircle2,
   XCircle,
-  Circle,
   AlertCircle,
 } from "lucide-react";
 import type { Repo } from "@/lib/api";
@@ -21,9 +20,9 @@ const statusConfig: Record<
   { label: string; color: string; icon: React.ReactNode }
 > = {
   pending: {
-    label: "Pending",
-    color: "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400",
-    icon: <Circle className="w-3 h-3" />,
+    label: "Fetching",
+    color: "bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-400",
+    icon: <Loader2 className="w-3 h-3 animate-spin" />,
   },
   cloning: {
     label: "Cloning",

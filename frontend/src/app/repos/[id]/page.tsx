@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { getRepo, getFileTree, getFileContent } from "@/lib/api";
+import AuthGuard from "@/components/auth-guard";
 import type { FileTreeNode as FileTreeNodeType, FileContent, GraphNode } from "@/lib/api";
 import FileTree from "@/components/file-tree";
 import CodeViewer from "@/components/code-viewer";
@@ -275,14 +276,16 @@ function RepoBrowser() {
 
 export default function RepoPage() {
   return (
-    <Suspense
-      fallback={
-        <div className="flex items-center justify-center h-screen">
-          <Loader2 className="w-8 h-8 animate-spin text-zinc-400" />
-        </div>
-      }
-    >
-      <RepoBrowser />
-    </Suspense>
+    <AuthGuard>
+      <Suspense
+        fallback={
+          <div className="flex items-center justify-center h-screen">
+            <Loader2 className="w-8 h-8 animate-spin text-zinc-400" />
+          </div>
+        }
+      >
+        <RepoBrowser />
+      </Suspense>
+    </AuthGuard>
   );
 }

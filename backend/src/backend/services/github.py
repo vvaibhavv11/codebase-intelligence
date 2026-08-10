@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import uuid
 from pathlib import Path
 
 from git import Repo
@@ -44,12 +45,18 @@ SKIP_DIRS = {
 MAX_FILE_SIZE = 500 * 1024
 
 
-def clone_repo(github_url: str, owner: str, name: str) -> Path:
-    """Clone a GitHub repository to the local repos directory.
+def repo_dir_for(user_id: uuid.UUID, owner: str, name: str) -> Path:
+    """Per-user clone location: ~/.derive/u<user_id>/<owner>__<name>."""
+    return settings.repos_path / f"u{user_id}" / f"{owner}__{name}"
 
-    Returns the path to the cloned repo.
+
+def clone_repo(github_url: str, owner: str, name: str, user_id: uuid.UUID) -> Path:
+    """Clone a GitHub repository to the user's repos directory.
+
+    Always a shallow clone (--depth 1). Returns the path to the cloned repo.
     """
-    repo_dir = settings.repos_path / f"{owner}__{name}"
+    repo_dir = repo_dir_for(user_id, owner, name)
+    repo_dir.parent.mkdir(parents=True, exist_ok=True)
 
     if repo_dir.exists():
         logger.info(f"Repo already exists at {repo_dir}, pulling latest...")

@@ -36,9 +36,11 @@ async def run_indexing(repo_id: uuid.UUID) -> None:
     Creates its own DB session since it executes outside the
     request lifecycle.
     """
+    logger.info("run_indexing: starting for repo %s", repo_id)
     async with async_session() as db:
         try:
             await _do_indexing(db, repo_id)
+            logger.info("run_indexing: done for repo %s", repo_id)
         except Exception as e:
             logger.exception(f"Indexing failed for repo {repo_id}")
             # Rollback any dirty state before setting error status
@@ -49,18 +51,28 @@ async def run_indexing(repo_id: uuid.UUID) -> None:
                 repo.status = RepoStatus.error
                 repo.error_message = str(e)
                 await db.commit()
+            logger.info("run_indexing: marked repo %s as error", repo_id)
 
 
 async def _do_indexing(db: AsyncSession, repo_id: uuid.UUID) -> None:
     repo = await db.get(Repository, repo_id)
     if not repo:
+        logger.warning("_do_indexing: repo %s not found", repo_id)
+        return
+
+    if repo.status in (RepoStatus.cloning, RepoStatus.indexing):
+        logger.info("_do_indexing: index already in progress for repo %s", repo_id)
         return
 
     # Step 1: Clone
     repo.status = RepoStatus.cloning
     await db.commit()
+    logger.info("_do_indexing: status=cloning committed for repo %s", repo_id)
 
-    repo_dir = await asyncio.to_thread(clone_repo, repo.github_url, repo.owner, repo.name)
+    repo_dir = await asyncio.to_thread(
+        clone_repo, repo.github_url, repo.owner, repo.name, repo.user_id
+    )
+    logger.info("_do_indexing: cloned to %s", repo_dir)
     repo.default_branch = await asyncio.to_thread(get_default_branch, repo_dir)
 
     # Step 2: Index

@@ -1,5 +1,71 @@
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
+// ── Auth helpers ─────────────────────────────────────────────────────────────
+
+export interface AuthUser {
+  id: string;
+  username: string;
+  created_at: string;
+}
+
+export interface LoginResponse {
+  token: string;
+  user: AuthUser;
+}
+
+export function getToken(): string | null {
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem("auth_token");
+}
+
+export function setAuth(token: string, username: string): void {
+  localStorage.setItem("auth_token", token);
+  localStorage.setItem("auth_username", username);
+}
+
+export function clearAuth(): void {
+  localStorage.removeItem("auth_token");
+  localStorage.removeItem("auth_username");
+}
+
+function authHeaders(extra?: Record<string, string>): Record<string, string> {
+  const headers: Record<string, string> = { ...(extra ?? {}) };
+  const token = getToken();
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  return headers;
+}
+
+export async function login(
+  username: string,
+  password: string
+): Promise<LoginResponse> {
+  const res = await fetch(`${API_URL}/api/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? "Login failed");
+  }
+  return res.json();
+}
+
+export async function logout(): Promise<void> {
+  const token = getToken();
+  if (token) {
+    try {
+      await fetch(`${API_URL}/api/auth/logout`, {
+        method: "POST",
+        headers: authHeaders(),
+      });
+    } catch {
+      // ignore network errors on logout
+    }
+  }
+  clearAuth();
+}
+
 // ── Types ────────────────────────────────────────────────────────────────────
 
 export interface Repo {
@@ -128,7 +194,7 @@ export interface GeneratedDoc {
 // ── Repos ────────────────────────────────────────────────────────────────────
 
 export async function listRepos(): Promise<Repo[]> {
-  const res = await fetch(`${API_URL}/api/repos`);
+  const res = await fetch(`${API_URL}/api/repos`, { headers: authHeaders() });
   if (!res.ok) throw new Error("Failed to fetch repos");
   const data = await res.json();
   return data.repositories;
@@ -137,7 +203,7 @@ export async function listRepos(): Promise<Repo[]> {
 export async function connectRepo(githubUrl: string): Promise<Repo> {
   const res = await fetch(`${API_URL}/api/repos`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({ github_url: githubUrl }),
   });
   if (!res.ok) {
@@ -148,7 +214,9 @@ export async function connectRepo(githubUrl: string): Promise<Repo> {
 }
 
 export async function getRepo(repoId: string): Promise<Repo> {
-  const res = await fetch(`${API_URL}/api/repos/${repoId}`);
+  const res = await fetch(`${API_URL}/api/repos/${repoId}`, {
+    headers: authHeaders(),
+  });
   if (!res.ok) throw new Error("Failed to fetch repo");
   return res.json();
 }
@@ -156,6 +224,7 @@ export async function getRepo(repoId: string): Promise<Repo> {
 export async function deleteRepo(repoId: string): Promise<void> {
   const res = await fetch(`${API_URL}/api/repos/${repoId}`, {
     method: "DELETE",
+    headers: authHeaders(),
   });
   if (!res.ok) throw new Error("Failed to delete repo");
 }
@@ -163,6 +232,7 @@ export async function deleteRepo(repoId: string): Promise<void> {
 export async function triggerIndex(repoId: string): Promise<void> {
   const res = await fetch(`${API_URL}/api/repos/${repoId}/index`, {
     method: "POST",
+    headers: authHeaders(),
   });
   if (!res.ok) throw new Error("Failed to trigger indexing");
 }
@@ -170,7 +240,9 @@ export async function triggerIndex(repoId: string): Promise<void> {
 export async function getRepoStatus(
   repoId: string
 ): Promise<{ repo_id: string; status: string; error_message: string | null; indexed_at: string | null }> {
-  const res = await fetch(`${API_URL}/api/repos/${repoId}/index/status`);
+  const res = await fetch(`${API_URL}/api/repos/${repoId}/index/status`, {
+    headers: authHeaders(),
+  });
   if (!res.ok) throw new Error("Failed to get repo status");
   return res.json();
 }
@@ -178,7 +250,9 @@ export async function getRepoStatus(
 // ── File tree ────────────────────────────────────────────────────────────────
 
 export async function getFileTree(repoId: string): Promise<FileTreeNode[]> {
-  const res = await fetch(`${API_URL}/api/repos/${repoId}/tree`);
+  const res = await fetch(`${API_URL}/api/repos/${repoId}/tree`, {
+    headers: authHeaders(),
+  });
   if (!res.ok) throw new Error("Failed to fetch file tree");
   return res.json();
 }
@@ -187,7 +261,9 @@ export async function getFileContent(
   repoId: string,
   path: string
 ): Promise<FileContent> {
-  const res = await fetch(`${API_URL}/api/repos/${repoId}/files/${path}`);
+  const res = await fetch(`${API_URL}/api/repos/${repoId}/files/${path}`, {
+    headers: authHeaders(),
+  });
   if (!res.ok) throw new Error("Failed to fetch file content");
   return res.json();
 }
@@ -200,7 +276,8 @@ export async function semanticSearch(
   limit = 10
 ): Promise<SearchResult[]> {
   const res = await fetch(
-    `${API_URL}/api/search?q=${encodeURIComponent(query)}&repo_id=${repoId}&limit=${limit}`
+    `${API_URL}/api/search?q=${encodeURIComponent(query)}&repo_id=${repoId}&limit=${limit}`,
+    { headers: authHeaders() }
   );
   if (!res.ok) throw new Error("Search failed");
   const data = await res.json();
@@ -210,7 +287,9 @@ export async function semanticSearch(
 // ── Dependency graph ────────────────────────────────────────────────────────
 
 export async function getDependencyGraph(repoId: string): Promise<GraphData> {
-  const res = await fetch(`${API_URL}/api/repos/${repoId}/graph`);
+  const res = await fetch(`${API_URL}/api/repos/${repoId}/graph`, {
+    headers: authHeaders(),
+  });
   if (!res.ok) throw new Error("Failed to fetch dependency graph");
   return res.json();
 }
@@ -220,7 +299,8 @@ export async function getDependents(
   symbolId: string
 ): Promise<GraphNode[]> {
   const res = await fetch(
-    `${API_URL}/api/repos/${repoId}/symbols/${symbolId}/dependents`
+    `${API_URL}/api/repos/${repoId}/symbols/${symbolId}/dependents`,
+    { headers: authHeaders() }
   );
   if (!res.ok) throw new Error("Failed to fetch dependents");
   return res.json();
@@ -233,7 +313,8 @@ export async function getCommits(
   limit = 50
 ): Promise<CommitSummary[]> {
   const res = await fetch(
-    `${API_URL}/api/repos/${repoId}/commits?limit=${limit}`
+    `${API_URL}/api/repos/${repoId}/commits?limit=${limit}`,
+    { headers: authHeaders() }
   );
   if (!res.ok) throw new Error("Failed to fetch commits");
   return res.json();
@@ -243,7 +324,9 @@ export async function getCommitDiff(
   repoId: string,
   sha: string
 ): Promise<CommitDiff> {
-  const res = await fetch(`${API_URL}/api/repos/${repoId}/commits/${sha}`);
+  const res = await fetch(`${API_URL}/api/repos/${repoId}/commits/${sha}`, {
+    headers: authHeaders(),
+  });
   if (!res.ok) throw new Error("Failed to fetch commit diff");
   return res.json();
 }
@@ -259,7 +342,7 @@ export async function streamDiffAnalysis(
 ): Promise<void> {
   const res = await fetch(`${API_URL}/api/repos/${repoId}/diff/analyze`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({ commit_sha: commitSha, file_path: filePath }),
     signal,
   });
@@ -311,6 +394,7 @@ export async function streamDiffAnalysis(
 export async function generateReadme(repoId: string): Promise<GeneratedDoc> {
   const res = await fetch(`${API_URL}/api/repos/${repoId}/docs/readme`, {
     method: "POST",
+    headers: authHeaders(),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
@@ -322,6 +406,7 @@ export async function generateReadme(repoId: string): Promise<GeneratedDoc> {
 export async function generateSymbolDoc(symbolId: string): Promise<GeneratedDoc> {
   const res = await fetch(`${API_URL}/api/symbols/${symbolId}/doc`, {
     method: "POST",
+    headers: authHeaders(),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
@@ -331,7 +416,9 @@ export async function generateSymbolDoc(symbolId: string): Promise<GeneratedDoc>
 }
 
 export async function getRepoDocs(repoId: string): Promise<GeneratedDoc[]> {
-  const res = await fetch(`${API_URL}/api/repos/${repoId}/docs`);
+  const res = await fetch(`${API_URL}/api/repos/${repoId}/docs`, {
+    headers: authHeaders(),
+  });
   if (!res.ok) throw new Error("Failed to fetch docs");
   const data = await res.json();
   return data.docs;
@@ -341,7 +428,8 @@ export async function getRepoDocs(repoId: string): Promise<GeneratedDoc[]> {
 
 export async function getSessions(repoId: string): Promise<ChatSession[]> {
   const res = await fetch(
-    `${API_URL}/api/chat/sessions?repo_id=${repoId}`
+    `${API_URL}/api/chat/sessions?repo_id=${repoId}`,
+    { headers: authHeaders() }
   );
   if (!res.ok) throw new Error("Failed to fetch sessions");
   const data = await res.json();
@@ -349,7 +437,9 @@ export async function getSessions(repoId: string): Promise<ChatSession[]> {
 }
 
 export async function getSession(sessionId: string): Promise<ChatSession> {
-  const res = await fetch(`${API_URL}/api/chat/sessions/${sessionId}`);
+  const res = await fetch(`${API_URL}/api/chat/sessions/${sessionId}`, {
+    headers: authHeaders(),
+  });
   if (!res.ok) throw new Error("Failed to fetch session");
   return res.json();
 }
@@ -365,7 +455,7 @@ export async function streamChat(
 ): Promise<void> {
   const res = await fetch(`${API_URL}/api/chat`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({
       repo_id: repoId,
       message,

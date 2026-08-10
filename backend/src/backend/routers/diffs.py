@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import logging
-import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -10,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.db import get_db
 from backend.models.repository import Repository
+from backend.routers.deps import require_repo
 from backend.schemas.diff import CommitDiff, CommitSummary, DiffAnalyzeRequest
 from backend.services.diffs import (
     get_commit_diff,
@@ -25,14 +25,10 @@ router = APIRouter(tags=["diffs"])
 
 @router.get("/repos/{repo_id}/commits", response_model=list[CommitSummary])
 async def list_commits(
-    repo_id: uuid.UUID,
     limit: int = 50,
     db: AsyncSession = Depends(get_db),
+    repo: Repository = Depends(require_repo),
 ):
-    repo = await db.get(Repository, repo_id)
-    if not repo:
-        raise HTTPException(status_code=404, detail="Repository not found")
-
     repo_dir = get_repo_dir(repo)
     if not repo_dir.exists():
         raise HTTPException(status_code=400, detail="Repository not cloned locally yet")
@@ -45,14 +41,10 @@ async def list_commits(
 
 @router.get("/repos/{repo_id}/commits/{sha}", response_model=CommitDiff)
 async def get_commit(
-    repo_id: uuid.UUID,
     sha: str,
     db: AsyncSession = Depends(get_db),
+    repo: Repository = Depends(require_repo),
 ):
-    repo = await db.get(Repository, repo_id)
-    if not repo:
-        raise HTTPException(status_code=404, detail="Repository not found")
-
     repo_dir = get_repo_dir(repo)
     if not repo_dir.exists():
         raise HTTPException(status_code=400, detail="Repository not cloned locally yet")
@@ -67,14 +59,10 @@ async def get_commit(
 
 @router.post("/repos/{repo_id}/diff/analyze")
 async def analyze_diff(
-    repo_id: uuid.UUID,
     body: DiffAnalyzeRequest,
     db: AsyncSession = Depends(get_db),
+    repo: Repository = Depends(require_repo),
 ):
-    repo = await db.get(Repository, repo_id)
-    if not repo:
-        raise HTTPException(status_code=404, detail="Repository not found")
-
     async def event_stream():
         try:
             async for chunk in stream_diff_analysis(db, repo, body.commit_sha, body.file_path):

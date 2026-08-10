@@ -20,20 +20,30 @@ All code is written but has never been run against a real repo. This is the crit
 - [ ] Verify repo README generation: `POST /api/docs/{repo_id}/readme`
 - [ ] Open frontend in browser and verify all tabs (Files, Graph, Commits, README) render data
 
-## 2. Bug Fixes & Edge Cases (discovered during E2E)
+> Note: production deployment is live (see AGENTS.md "Production"). Basic smoke tests passed:
+> `GET /api/health`, CORS preflight from the Vercel origin, and the frontend loads.
+> Full indexing/search/chat flow against a real repo is still unverified.
 
-These will likely surface during testing:
+## 2. Bug Fixes & Edge Cases (partially done)
 
-- [ ] Fix any import/runtime errors when indexing runs
-- [ ] Fix any NVIDIA embedding API rate limiting or batch size issues
-- [ ] Fix any SSE streaming issues in chat/diff analysis endpoints
+Fixes already shipped to production (Aug 2026):
+
+- [x] SSE streaming robustness — chunks are JSON-encoded (`{"text": "..."}`), `event: error` on failures, `event: done` at end (routers/chat.py, routers/diffs.py, frontend lib/api.ts)
+- [x] Indexer error handling — `db.rollback()` before setting `status=error`; git ops (`clone_repo`, `walk_source_files`) run in `asyncio.to_thread()`
+- [x] Embedding API resilience — exponential backoff retries (5 attempts, batch size 50) for NVIDIA rate limits
+- [x] `.env.example` — split chat/embedding config documented
+
+Still TODO:
+
+- [ ] Fix any import/runtime errors when indexing actually runs
+- [ ] Fix any SSE streaming issues discovered in real browser testing
 - [ ] Fix any frontend rendering issues with real data
-- [ ] Handle repos with no symbols (empty or non-code repos)
-- [ ] Handle indexing failures gracefully (set status to `error` with message)
+- [ ] Handle repos with no symbols (empty or non-code repos) — currently silently becomes `ready` with 0 files; consider a user-facing warning
+- [ ] Handle indexing failures gracefully (set status to `error` with message) — core path done, verify in practice
 
 ## 3. `.env.example` Update
 
-- [ ] Update `.env.example` to reflect the split chat/embedding config:
+- [x] Split chat/embedding config documented:
   - `OPENAI_EMBEDDING_BASE=https://integrate.api.nvidia.com/v1`
   - `OPENAI_EMBEDDING_API_KEY=`
   - `OPENAI_EMBEDDING_MODEL=nvidia/nemotron-3-embed-1b`
@@ -44,14 +54,18 @@ These will likely surface during testing:
 - [ ] Test the full OAuth flow: login page → GitHub redirect → callback → session
 - [ ] Currently the app works without auth (all endpoints are unauthenticated)
 
-## 5. Production Deployment (FUTURE)
+## 5. Production Deployment (DONE — live Aug 2026)
 
-- [ ] Add `frontend/.env.local` with `NEXT_PUBLIC_API_URL` pointing to the production backend
-- [ ] Set up reverse proxy (nginx/caddy) for frontend + backend
-- [ ] Configure CORS for production domain
-- [ ] Set a real `SECRET_KEY` in `.env`
-- [ ] Set up SSL/TLS
-- [ ] Consider adding rate limiting to embedding/chat endpoints (NVIDIA free tier limits)
+- [x] Frontend deployed on Vercel: `https://codebase-intelligence-jet.vercel.app` (project `codebase-intelligence`)
+- [x] Backend runs as systemd service `codebase-intelligence` on port **8001**
+- [x] Reverse proxy: nginx `vuptime.duckdns.org` → `127.0.0.1:8001` (SSE buffering disabled)
+- [x] CORS configured for production domain (comma-separated `FRONTEND_URL` in `backend/.env`)
+- [x] Real `SECRET_KEY` set in `backend/.env`
+- [x] SSL/TLS via existing Let's Encrypt cert on `vuptime.duckdns.org`
+- [x] `uv.lock` now committed for deterministic builds
+- [ ] Rate limiting on embedding/chat endpoints (NVIDIA free tier limits) — not yet implemented
+- [ ] Authentication on API endpoints — not yet implemented
+- [ ] DB credentials are still dev defaults (`codebase/codebase`) — harden if DB is ever exposed beyond localhost
 
 ## 6. Nice-to-Haves (FUTURE)
 
@@ -68,4 +82,4 @@ These will likely surface during testing:
 - **Chat LLM**: `vcliproxyapi.duckdns.org` → `deepseek-v4-flash-free` (used by rag.py, diffs.py, docs.py)
 - **Embeddings**: `integrate.api.nvidia.com/v1` → `nvidia/nemotron-3-embed-1b` (2048 dims, used by embeddings.py)
 - **Vector search**: exact cosine distance (no ANN index — pgvector caps ivfflat/hnsw at 2000 dims, our vectors are 2048)
-- **Migrations**: 3 applied (`454e27362b68` → `051b2df8478e` → `ce78ab1e4c1c`)
+- **Migrations**: 3 applied (`454e27362b68` → `051b2df8478e` → `ce78ab1e4c1c`); `alembic/env.py` reads `DATABASE_URL` from env

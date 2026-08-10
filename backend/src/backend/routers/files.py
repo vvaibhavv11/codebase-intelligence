@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import uuid
-
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,16 +8,18 @@ from backend.db import get_db
 from backend.models.repository import Repository
 from backend.models.file import File
 from backend.models.symbol import CodeSymbol
+from backend.routers.deps import require_repo
 from backend.schemas.repo import FileTreeNode, FileContentResponse, SymbolInfo
 
 router = APIRouter(tags=["files"])
 
 
 @router.get("/repos/{repo_id}/tree", response_model=list[FileTreeNode])
-async def get_file_tree(repo_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
-    repo = await db.get(Repository, repo_id)
-    if not repo:
-        raise HTTPException(status_code=404, detail="Repository not found")
+async def get_file_tree(
+    repo: Repository = Depends(require_repo),
+    db: AsyncSession = Depends(get_db),
+):
+    repo_id = repo.id
 
     result = await db.execute(
         select(File)
@@ -68,11 +68,11 @@ def build_tree(files) -> list[FileTreeNode]:
 
 @router.get("/repos/{repo_id}/files/{file_path:path}", response_model=FileContentResponse)
 async def get_file_content(
-    repo_id: uuid.UUID, file_path: str, db: AsyncSession = Depends(get_db)
+    file_path: str,
+    repo: Repository = Depends(require_repo),
+    db: AsyncSession = Depends(get_db),
 ):
-    repo = await db.get(Repository, repo_id)
-    if not repo:
-        raise HTTPException(status_code=404, detail="Repository not found")
+    repo_id = repo.id
 
     result = await db.execute(
         select(File).where(File.repo_id == repo_id, File.path == file_path)

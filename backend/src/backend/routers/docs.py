@@ -10,6 +10,8 @@ from backend.db import get_db
 from backend.models.generated_doc import GeneratedDoc
 from backend.models.repository import Repository
 from backend.models.symbol import CodeSymbol
+from backend.models.user import User
+from backend.routers.deps import get_current_user, require_repo
 from backend.schemas.docs import GeneratedDocListResponse, GeneratedDocResponse
 from backend.services.docs import (
     generate_repo_readme,
@@ -22,10 +24,11 @@ router = APIRouter(tags=["docs"])
 
 
 @router.post("/repos/{repo_id}/docs/readme", response_model=GeneratedDocResponse)
-async def generate_readme(repo_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
-    repo = await db.get(Repository, repo_id)
-    if not repo:
-        raise HTTPException(status_code=404, detail="Repository not found")
+async def generate_readme(
+    repo: Repository = Depends(require_repo),
+    db: AsyncSession = Depends(get_db),
+):
+    repo_id = repo.id
 
     # Return cached version if present
     cached = await get_cached_doc(db, repo_id, "readme")
@@ -41,9 +44,17 @@ async def generate_readme(repo_id: uuid.UUID, db: AsyncSession = Depends(get_db)
 
 
 @router.post("/symbols/{symbol_id}/doc", response_model=GeneratedDocResponse)
-async def generate_symbol_docs(symbol_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+async def generate_symbol_docs(
+    symbol_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
     symbol = await db.get(CodeSymbol, symbol_id)
     if not symbol:
+        raise HTTPException(status_code=404, detail="Symbol not found")
+
+    repo = await db.get(Repository, symbol.repo_id)
+    if not repo or repo.user_id != user.id:
         raise HTTPException(status_code=404, detail="Symbol not found")
 
     cached = await get_cached_doc(db, symbol.repo_id, "symbol_doc", symbol_id)
@@ -59,10 +70,11 @@ async def generate_symbol_docs(symbol_id: uuid.UUID, db: AsyncSession = Depends(
 
 
 @router.get("/repos/{repo_id}/docs", response_model=GeneratedDocListResponse)
-async def list_docs(repo_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
-    repo = await db.get(Repository, repo_id)
-    if not repo:
-        raise HTTPException(status_code=404, detail="Repository not found")
+async def list_docs(
+    repo: Repository = Depends(require_repo),
+    db: AsyncSession = Depends(get_db),
+):
+    repo_id = repo.id
 
     result = await db.execute(
         select(GeneratedDoc)

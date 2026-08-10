@@ -1,67 +1,40 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import RedirectResponse
-import httpx
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.config import settings
+from backend.db import get_db
+from backend.models.user import User
+from backend.routers.deps import get_current_user
+from backend.schemas.auth import LoginRequest, LoginResponse, UserResponse
+from backend.services.auth import generate_token, hash_password, verify_password
 
 router = APIRouter(tags=["auth"])
 
 
-@router.get("/auth/github/login")
-async def github_login():
-    """Redirect user to GitHub OAuth authorization page."""
-    github_auth_url = (
-        f"https://github.com/login/oauth/authorize"
-        f"?client_id={settings.github_client_id}"
-        f"&scope=repo read:user"
-        f"&redirect_uri={settings.backend_url}/api/auth/github/callback"
-    )
-    return RedirectResponse(url=github_auth_url)
+@router.post("/auth/login", response_model=LoginResponse)
+async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(User).where(User.username == body.username))
+    user = result.scalar_one_or_none()
+    if not user or not verify_password(body.password, user.password_hash):
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+
+    user.token = generate_token()
+    await db.commit()
+    await db.refresh(user)
+    return LoginResponse(token=user.token, user=UserResponse.model_validate(user))
 
 
-@router.get("/auth/github/callback")
-async def github_callback(code: str = Query(...)):
-    """Exchange the OAuth code for an access token and redirect to frontend."""
-    async with httpx.AsyncClient() as client:
-        # Exchange code for token
-        response = await client.post(
-            "https://github.com/login/oauth/access_token",
-            json={
-                "client_id": settings.github_client_id,
-                "client_secret": settings.github_client_secret,
-                "code": code,
-            },
-            headers={"Accept": "application/json"},
-        )
+@router.post("/auth/logout", status_code=204)
+async def logout(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    current_user.token = None
+    await db.commit()
 
-        if response.status_code != 200:
-            raise HTTPException(status_code=400, detail="Failed to exchange code")
 
-        data = response.json()
-        access_token = data.get("access_token")
-        if not access_token:
-            raise HTTPException(
-                status_code=400,
-                detail=data.get("error_description", "Failed to get access token"),
-            )
-
-        # Get user info
-        user_response = await client.get(
-            "https://api.github.com/user",
-            headers={
-                "Authorization": f"Bearer {access_token}",
-                "Accept": "application/vnd.github.v3+json",
-            },
-        )
-        user_data = user_response.json()
-
-    # Redirect to frontend with token
-    redirect_url = (
-        f"{settings.frontend_url}/auth/callback"
-        f"?token={access_token}"
-        f"&username={user_data.get('login', '')}"
-        f"&avatar={user_data.get('avatar_url', '')}"
-    )
-    return RedirectResponse(url=redirect_url)
+@router.get("/auth/me", response_model=UserResponse)
+async def me(current_user: User = Depends(get_current_user)):
+    return current_user
