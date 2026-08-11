@@ -4,7 +4,7 @@ import json
 import logging
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,6 +20,7 @@ from backend.schemas.chat import (
     ChatSessionResponse,
     ChatSessionListResponse,
     ChatMessageResponse,
+    ChatSessionUpdate,
 )
 
 logger = logging.getLogger(__name__)
@@ -30,6 +31,7 @@ router = APIRouter(tags=["chat"])
 @router.post("/chat")
 async def chat(
     body: ChatRequest,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
@@ -48,6 +50,12 @@ async def chat(
         session = ChatSession(repo_id=body.repo_id, title=body.message[:100])
         db.add(session)
         await db.flush()
+
+    # Auto-title: untitled sessions get a title from the first message
+    if session.title is None:
+        first_line = body.message.splitlines()[0].strip() if body.message.strip() else ""
+        session.title = (first_line or body.message)[:100]
+        db.add(session)
 
     # Save user message
     user_msg = ChatMessage(
@@ -69,6 +77,9 @@ async def chat(
             async for kind, payload in stream_rag_response(
                 db, repo.id, session.id, body.message
             ):
+                if await request.is_disconnected():
+                    logger.info("Client disconnected, stopping stream")
+                    break
                 if kind == "refs":
                     marker = payload.get("marker", "")
                     yield (
@@ -81,21 +92,24 @@ async def chat(
         except Exception as e:
             logger.exception("Chat streaming failed")
             yield f"event: error\ndata: {json.dumps({'error': str(e)})}\n\n"
+        finally:
+            # Save assistant message — even a partial one (client aborted mid-stream)
+            if full_response:
+                try:
+                    assistant_msg = ChatMessage(
+                        session_id=session.id,
+                        role="assistant",
+                        content="".join(full_response) + marker,
+                    )
+                    db.add(assistant_msg)
+                    await db.commit()
+                except Exception:
+                    logger.exception("Failed to save assistant message")
+                    await db.rollback()
 
-        # Save assistant message
-        try:
-            assistant_msg = ChatMessage(
-                session_id=session.id,
-                role="assistant",
-                content="".join(full_response) + marker,
-            )
-            db.add(assistant_msg)
-            await db.commit()
-        except Exception:
-            logger.exception("Failed to save assistant message")
-            await db.rollback()
-
-        yield f"event: done\ndata: {json.dumps({'session_id': str(session.id)})}\n\n"
+        # Only emit the done event if the client is still connected
+        if not await request.is_disconnected():
+            yield f"event: done\ndata: {json.dumps({'session_id': str(session.id)})}\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
@@ -113,7 +127,6 @@ async def list_sessions(
     )
     sessions = result.scalars().all()
     return ChatSessionListResponse(sessions=sessions)
-
 
 @router.get("/chat/sessions/{session_id}", response_model=ChatSessionResponse)
 async def get_session(
@@ -134,3 +147,47 @@ async def get_session(
     if not repo or repo.user_id != user.id:
         raise HTTPException(status_code=404, detail="Chat session not found")
     return session
+
+
+@router.patch("/chat/sessions/{session_id}", response_model=ChatSessionResponse)
+async def rename_session(
+    session_id: uuid.UUID,
+    body: ChatSessionUpdate,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    session = await db.get(ChatSession, session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Chat session not found")
+
+    repo = await db.get(Repository, session.repo_id)
+    if not repo or repo.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Chat session not found")
+
+    session.title = body.title
+    await db.commit()
+
+    result = await db.execute(
+        select(ChatSession)
+        .where(ChatSession.id == session_id)
+        .options(selectinload(ChatSession.messages))
+    )
+    return result.scalar_one()
+
+
+@router.delete("/chat/sessions/{session_id}", status_code=204)
+async def delete_session(
+    session_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    session = await db.get(ChatSession, session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Chat session not found")
+
+    repo = await db.get(Repository, session.repo_id)
+    if not repo or repo.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Chat session not found")
+
+    await db.delete(session)
+    await db.commit()

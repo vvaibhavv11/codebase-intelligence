@@ -2,15 +2,15 @@
 
 import { useCallback, useEffect, useRef, useState, useMemo } from "react";
 import {
-  MessageSquare,
   Send,
   StopCircle,
-  Loader2,
-  ChevronDown,
   Sparkles,
   Bot,
   User,
   FileCode2,
+  Plus,
+  Pencil,
+  Trash2,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -19,6 +19,8 @@ import {
   streamChat,
   getSessions,
   getSession,
+  renameSession,
+  deleteSession,
   type ChatSession,
   type ChatReference,
 } from "@/lib/api";
@@ -53,6 +55,20 @@ function extractRefsFromContent(content: string): ChatReference[] | undefined {
   } catch {
     return undefined;
   }
+}
+
+function formatRelativeDate(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  const diffMs = Date.now() - date.getTime();
+  const mins = Math.floor(diffMs / 60000);
+  if (mins < 1) return "Just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  if (days < 7) return `${days}d ago`;
+  return date.toLocaleDateString();
 }
 
 /* ---------- Shiki-highlighted code block (async) ---------- */
@@ -184,16 +200,27 @@ export default function ChatPanel({ repoId, onOpenFile }: ChatPanelProps) {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [loading, setLoading] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingTitle, setEditingTitle] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Load sessions on mount
-  useEffect(() => {
+  const refreshSessions = useCallback(() => {
     getSessions(repoId)
       .then(setSessions)
       .catch(() => {});
   }, [repoId]);
+
+  // Load sessions on mount
+  useEffect(() => {
+    refreshSessions();
+  }, [refreshSessions]);
+
+  // Abort any in-flight stream on unmount
+  useEffect(() => {
+    return () => abortRef.current?.abort();
+  }, []);
 
   // Auto-scroll
   useEffect(() => {
@@ -245,9 +272,7 @@ export default function ChatPanel({ repoId, onOpenFile }: ChatPanelProps) {
         },
         (newSessionId) => {
           setSessionId(newSessionId);
-          getSessions(repoId)
-            .then(setSessions)
-            .catch(() => {});
+          refreshSessions();
         },
         (refs) => {
           setMessages((prev) =>
@@ -295,15 +320,25 @@ export default function ChatPanel({ repoId, onOpenFile }: ChatPanelProps) {
 
   function handleAbort() {
     abortRef.current?.abort();
+    refreshSessions();
+  }
+
+  function handleNewChat() {
+    abortRef.current?.abort();
+    setSessionId(null);
+    setMessages([]);
+    setInput("");
+    setEditingId(null);
   }
 
   async function handleSessionChange(id: string) {
+    if (loading) return;
+    setEditingId(null);
+    setSessionId(id);
     if (id === "") {
-      setSessionId(null);
       setMessages([]);
       return;
     }
-    setSessionId(id);
     try {
       const session = await getSession(id);
       setMessages(
@@ -319,6 +354,37 @@ export default function ChatPanel({ repoId, onOpenFile }: ChatPanelProps) {
     }
   }
 
+  function startRename(session: ChatSession) {
+    setEditingId(session.id);
+    setEditingTitle(session.title ?? "");
+  }
+
+  async function handleRenameSave(id: string) {
+    const title = editingTitle.trim();
+    setEditingId(null);
+    if (!title) return;
+    try {
+      await renameSession(id, title);
+    } catch {
+      // ignore — refresh will resync the list
+    }
+    refreshSessions();
+  }
+
+  async function handleDeleteSession(id: string) {
+    if (!window.confirm("Delete this chat? This cannot be undone.")) return;
+    try {
+      await deleteSession(id);
+    } catch {
+      return;
+    }
+    if (sessionId === id) {
+      setSessionId(null);
+      setMessages([]);
+    }
+    refreshSessions();
+  }
+
   // Auto-resize textarea
   const handleTextareaChange = useCallback(
     (e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -331,34 +397,105 @@ export default function ChatPanel({ repoId, onOpenFile }: ChatPanelProps) {
   );
 
   return (
-    <div className="flex flex-col h-full bg-white dark:bg-zinc-950">
-      {/* Session bar */}
-      <div className="flex items-center gap-3 px-4 py-2.5 border-b border-zinc-200 dark:border-zinc-800 bg-zinc-50/80 dark:bg-zinc-900/80 shrink-0">
-        <div className="flex items-center gap-2">
+    <div className="flex flex-row h-full bg-white dark:bg-zinc-950">
+      {/* Session sidebar */}
+      <aside className="w-60 shrink-0 flex flex-col border-r border-zinc-200 dark:border-zinc-800 bg-zinc-50/80 dark:bg-zinc-900/80">
+        <div className="flex items-center gap-2 px-4 py-3 border-b border-zinc-200 dark:border-zinc-800">
           <Sparkles className="w-4 h-4 text-blue-500" />
           <span className="text-sm font-semibold text-zinc-700 dark:text-zinc-300">
             AI Chat
           </span>
         </div>
 
-        <div className="relative ml-auto">
-          <select
-            value={sessionId ?? ""}
-            onChange={(e) => handleSessionChange(e.target.value)}
-            className="appearance-none bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg text-xs px-3 py-1.5 pr-7 focus:outline-none focus:ring-2 focus:ring-blue-500 text-zinc-600 dark:text-zinc-400 cursor-pointer"
+        <div className="p-2.5 border-b border-zinc-200 dark:border-zinc-800">
+          <button
+            onClick={handleNewChat}
+            disabled={loading}
+            className="w-full flex items-center justify-center gap-1.5 rounded-lg bg-blue-600 text-white text-xs font-medium px-3 py-2 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            title="Start a new chat"
           >
-            <option value="">New conversation</option>
-            {sessions.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.title ?? "Untitled"}
-              </option>
-            ))}
-          </select>
-          <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-zinc-400 pointer-events-none" />
+            <Plus className="w-3.5 h-3.5" />
+            New chat
+          </button>
         </div>
-      </div>
 
-      {/* Messages */}
+        <div className="flex-1 overflow-y-auto px-2 py-2 space-y-0.5">
+          {sessions.length === 0 && (
+            <p className="text-xs text-zinc-400 text-center mt-6 px-2 leading-relaxed">
+              No saved chats yet.
+              <br />
+              Your conversations are saved here.
+            </p>
+          )}
+          {sessions.map((s) => {
+            const active = s.id === sessionId;
+            return (
+              <div
+                key={s.id}
+                onClick={() => handleSessionChange(s.id)}
+                className={`group relative rounded-lg px-2.5 py-2 cursor-pointer border text-left transition-colors ${
+                  active
+                    ? "bg-blue-50 dark:bg-blue-950/40 border-blue-200 dark:border-blue-800"
+                    : "border-transparent hover:bg-zinc-100 dark:hover:bg-zinc-800/70"
+                }`}
+              >
+                {editingId === s.id ? (
+                  <input
+                    autoFocus
+                    value={editingTitle}
+                    onChange={(e) => setEditingTitle(e.target.value)}
+                    onKeyDown={(e) => {
+                      e.stopPropagation();
+                      if (e.key === "Enter") handleRenameSave(s.id);
+                      if (e.key === "Escape") setEditingId(null);
+                    }}
+                    onClick={(e) => e.stopPropagation()}
+                    placeholder="Chat title"
+                    className="w-full text-xs bg-white dark:bg-zinc-800 border border-blue-500 rounded px-1.5 py-0.5 focus:outline-none text-zinc-800 dark:text-zinc-200"
+                  />
+                ) : (
+                  <>
+                    <div className="truncate pr-12 text-xs font-medium text-zinc-700 dark:text-zinc-300">
+                      {s.title ?? "Untitled"}
+                    </div>
+                    <div className="text-[10px] text-zinc-400">
+                      {formatRelativeDate(s.created_at)}
+                    </div>
+                  </>
+                )}
+                {!loading && editingId !== s.id && (
+                  <div className="absolute right-1 top-1/2 -translate-y-1/2 hidden group-hover:flex items-center gap-0.5">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        startRename(s);
+                      }}
+                      title="Rename chat"
+                      className="p-1 rounded hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-500 dark:text-zinc-400"
+                    >
+                      <Pencil className="w-3 h-3" />
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDeleteSession(s.id);
+                      }}
+                      title="Delete chat"
+                      className="p-1 rounded hover:bg-red-100 dark:hover:bg-red-900/30 text-zinc-500 dark:text-zinc-400 hover:text-red-600 dark:hover:text-red-400"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </aside>
+
+      {/* Main chat column */}
+      <div className="flex flex-col flex-1 min-w-0">
+        {/* Messages */}
       <div className="flex-1 overflow-y-auto">
         {messages.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-center px-6">
@@ -499,6 +636,7 @@ export default function ChatPanel({ repoId, onOpenFile }: ChatPanelProps) {
             Enter to send, Shift+Enter for new line
           </p>
         </div>
+      </div>
       </div>
     </div>
   );

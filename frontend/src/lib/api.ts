@@ -489,6 +489,27 @@ export async function getSession(sessionId: string): Promise<ChatSession> {
   return res.json();
 }
 
+export async function renameSession(
+  sessionId: string,
+  title: string
+): Promise<ChatSession> {
+  const res = await authFetch(`${API_URL}/api/chat/sessions/${sessionId}`, {
+    method: "PATCH",
+    headers: authHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ title }),
+  });
+  if (!res.ok) throw new Error("Failed to rename session");
+  return res.json();
+}
+
+export async function deleteSession(sessionId: string): Promise<void> {
+  const res = await authFetch(`${API_URL}/api/chat/sessions/${sessionId}`, {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
+  if (!res.ok && res.status !== 204) throw new Error("Failed to delete session");
+}
+
 export async function streamChat(
   repoId: string,
   message: string,
