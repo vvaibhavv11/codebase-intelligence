@@ -84,3 +84,80 @@ body {
 .animate-cursor-blink {
   animation: cursor-blink 1s ease-in-out infinite;
 }
+
+/* ---- Chat markdown styling ---- */
+
+/* Code blocks inside chat messages — no line numbers, compact */
+.chat-code-block .shiki {
+  padding: 0.75rem 1rem;
+  border-radius: 0 0 0.5rem 0.5rem;
+  font-size: 0.8125rem;
+  line-height: 1.6;
+  margin: 0;
+}
+
+.chat-code-block .shiki code > .line::before {
+  display: none;
+}
+
+.chat-code-block .shiki code > .line {
+  padding: 0;
+}
+
+/* Tighten prose in chat messages */
+.chat-markdown.prose {
+  font-size: 0.875rem;
+  line-height: 1.65;
+}
+
+.chat-markdown.prose p {
+  margin-top: 0.5em;
+  margin-bottom: 0.5em;
+}
+
+.chat-markdown.prose p:first-child {
+  margin-top: 0;
+}
+
+.chat-markdown.prose ul,
+.chat-markdown.prose ol {
+  margin-top: 0.4em;
+  margin-bottom: 0.4em;
+}
+
+.chat-markdown.prose li {
+  margin-top: 0.15em;
+  margin-bottom: 0.15em;
+}
+
+.chat-markdown.prose h1,
+.chat-markdown.prose h2,
+.chat-markdown.prose h3 {
+  margin-top: 1em;
+  margin-bottom: 0.4em;
+}
+
+.chat-markdown.prose h1:first-child,
+.chat-markdown.prose h2:first-child,
+.chat-markdown.prose h3:first-child {
+  margin-top: 0;
+}
+
+.chat-markdown.prose table {
+  font-size: 0.8125rem;
+}
+
+.chat-markdown.prose blockquote {
+  margin-top: 0.5em;
+  margin-bottom: 0.5em;
+}
+
+.chat-markdown.prose hr {
+  margin-top: 1em;
+  margin-bottom: 1em;
+}
+
+.chat-markdown.prose img {
+  max-width: 100%;
+  border-radius: 0.5rem;
+}
