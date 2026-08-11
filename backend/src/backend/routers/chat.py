@@ -64,10 +64,20 @@ async def chat(
 
     async def event_stream():
         full_response = []
+        marker = ""
         try:
-            async for chunk in stream_rag_response(db, repo.id, session.id, body.message):
-                full_response.append(chunk)
-                yield f"data: {json.dumps({'text': chunk})}\n\n"
+            async for kind, payload in stream_rag_response(
+                db, repo.id, session.id, body.message
+            ):
+                if kind == "refs":
+                    marker = payload.get("marker", "")
+                    yield (
+                        "event: references\n"
+                        f"data: {json.dumps({'references': payload.get('references', [])})}\n\n"
+                    )
+                else:
+                    full_response.append(payload)
+                    yield f"data: {json.dumps({'text': payload})}\n\n"
         except Exception as e:
             logger.exception("Chat streaming failed")
             yield f"event: error\ndata: {json.dumps({'error': str(e)})}\n\n"
@@ -77,7 +87,7 @@ async def chat(
             assistant_msg = ChatMessage(
                 session_id=session.id,
                 role="assistant",
-                content="".join(full_response),
+                content="".join(full_response) + marker,
             )
             db.add(assistant_msg)
             await db.commit()

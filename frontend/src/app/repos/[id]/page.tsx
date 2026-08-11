@@ -257,7 +257,7 @@ function RepoBrowser() {
       <div className="flex flex-1 overflow-hidden">
         {/* Chat — always visible, takes remaining space */}
         <main className="flex-1 overflow-hidden">
-          <ChatPanel repoId={repoId} />
+          <ChatPanel repoId={repoId} onOpenFile={navigateToFile} />
         </main>
 
         {/* Code panel — slides in from the right */}

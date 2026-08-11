@@ -10,6 +10,7 @@ import {
   Sparkles,
   Bot,
   User,
+  FileCode2,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -19,10 +20,12 @@ import {
   getSessions,
   getSession,
   type ChatSession,
+  type ChatReference,
 } from "@/lib/api";
 
 interface ChatPanelProps {
   repoId: string;
+  onOpenFile?: (path: string, line?: number) => void;
 }
 
 interface DisplayMessage {
@@ -30,6 +33,26 @@ interface DisplayMessage {
   role: "user" | "assistant";
   content: string;
   streaming?: boolean;
+  references?: ChatReference[];
+}
+
+/* ---------- Persisted reference marker ---------- */
+
+const REFS_MARKER_RE = /<!--refs:[\s\S]*?-->/;
+
+function stripRefsMarker(content: string): string {
+  return content.replace(REFS_MARKER_RE, "");
+}
+
+function extractRefsFromContent(content: string): ChatReference[] | undefined {
+  const match = content.match(REFS_MARKER_RE);
+  if (!match) return undefined;
+  try {
+    const parsed = JSON.parse(match[0].slice(8, -3)); // strip <!--refs: and -->
+    return Array.isArray(parsed) ? (parsed as ChatReference[]) : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /* ---------- Shiki-highlighted code block (async) ---------- */
@@ -155,7 +178,7 @@ function MarkdownMessage({
 
 /* ---------- Main ChatPanel component ---------- */
 
-export default function ChatPanel({ repoId }: ChatPanelProps) {
+export default function ChatPanel({ repoId, onOpenFile }: ChatPanelProps) {
   const [messages, setMessages] = useState<DisplayMessage[]>([]);
   const [input, setInput] = useState("");
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -226,6 +249,13 @@ export default function ChatPanel({ repoId }: ChatPanelProps) {
             .then(setSessions)
             .catch(() => {});
         },
+        (refs) => {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === assistantMsg.id ? { ...m, references: refs } : m
+            )
+          );
+        },
         controller.signal,
         (errorMessage) => {
           setMessages((prev) =>
@@ -281,6 +311,7 @@ export default function ChatPanel({ repoId }: ChatPanelProps) {
           id: m.id,
           role: m.role as "user" | "assistant",
           content: m.content,
+          references: extractRefsFromContent(m.content),
         })) ?? []
       );
     } catch {
@@ -390,10 +421,34 @@ export default function ChatPanel({ repoId }: ChatPanelProps) {
                       {m.content}
                     </div>
                   ) : (
-                    <MarkdownMessage
-                      content={m.content}
-                      streaming={m.streaming}
-                    />
+                    <>
+                      <MarkdownMessage
+                        content={stripRefsMarker(m.content)}
+                        streaming={m.streaming}
+                      />
+                      {m.references && m.references.length > 0 && (
+                        <div className="flex flex-wrap gap-1.5 mt-2">
+                          {m.references.map((ref, index) => (
+                            <button
+                              key={`${ref.file_path}:${ref.start_line}:${index}`}
+                              onClick={() =>
+                                onOpenFile?.(ref.file_path, ref.start_line)
+                              }
+                              title={`View ${ref.symbol_name} in ${ref.file_path}`}
+                              className="flex items-center gap-1.5 rounded-full border border-blue-200 dark:border-blue-800 bg-blue-50/60 dark:bg-blue-950/30 px-2.5 py-1 text-xs font-mono text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/40 hover:border-blue-300 dark:hover:border-blue-700 transition-colors"
+                            >
+                              <FileCode2 className="w-3 h-3 shrink-0" />
+                              <span className="font-semibold">
+                                {ref.symbol_name}
+                              </span>
+                              <span className="text-blue-400 dark:text-blue-500">
+                                {ref.file_path}:{ref.start_line}
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </>
                   )}
                 </div>
               </div>

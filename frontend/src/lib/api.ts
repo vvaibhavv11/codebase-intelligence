@@ -166,6 +166,14 @@ export interface ChatMessage {
   created_at: string;
 }
 
+export interface ChatReference {
+  file_path: string;
+  symbol_name: string;
+  symbol_kind: string;
+  start_line: number;
+  end_line: number;
+}
+
 // ── Phase 2: Dependency graph ───────────────────────────────────────────────
 
 export interface GraphNode {
@@ -411,10 +419,12 @@ export async function streamDiffAnalysis(
         onDone();
       } else if (type === "error") {
         const payload = parseSseData(data);
-        onError?.(payload?.error ?? "Streaming error");
+        onError?.(
+          typeof payload?.error === "string" ? payload.error : "Streaming error"
+        );
       } else if (data) {
         const payload = parseSseData(data);
-        if (payload?.text != null) {
+        if (typeof payload?.text === "string") {
           onChunk(payload.text);
         } else {
           onChunk(data);
@@ -485,6 +495,7 @@ export async function streamChat(
   sessionId: string | null,
   onChunk: (text: string) => void,
   onDone: (sessionId: string) => void,
+  onReferences?: (refs: ChatReference[]) => void,
   signal?: AbortSignal,
   onError?: (message: string) => void
 ): Promise<void> {
@@ -525,14 +536,26 @@ export async function streamChat(
         ?.replace("data:", "")
         .trim();
 
-      if (type === "done") {
+      if (type === "references") {
         const payload = parseSseData(data);
-        onDone(payload?.session_id ?? sessionId ?? "");
+        if (Array.isArray(payload?.references)) {
+          onReferences?.(payload.references as ChatReference[]);
+        }
+      } else if (type === "done") {
+        const payload = parseSseData(data);
+        onDone(
+          typeof payload?.session_id === "string"
+            ? payload.session_id
+            : sessionId ?? ""
+        );
       } else if (type === "error") {
-        onError?.(parseSseData(data)?.error ?? "Streaming error");
+        const payload = parseSseData(data);
+        onError?.(
+          typeof payload?.error === "string" ? payload.error : "Streaming error"
+        );
       } else if (data) {
         const payload = parseSseData(data);
-        if (payload?.text != null) {
+        if (typeof payload?.text === "string") {
           onChunk(payload.text);
         } else {
           onChunk(data);
@@ -542,7 +565,7 @@ export async function streamChat(
   }
 }
 
-function parseSseData(data: string | undefined): { [key: string]: string } | null {
+function parseSseData(data: string | undefined): Record<string, unknown> | null {
   if (!data) return null;
   try {
     return JSON.parse(data);

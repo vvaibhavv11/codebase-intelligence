@@ -7,6 +7,7 @@ dependency-graph dependents.
 """
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 from collections.abc import AsyncGenerator
@@ -140,6 +141,36 @@ async def _retrieve_dependents(
     return sorted(by_id.values(), key=lambda c: c["dependents"], reverse=True)[:max_chunks]
 
 
+def _build_references(
+    context_chunks: list[dict], max_refs: int = 8
+) -> tuple[list[dict], str]:
+    """Extract deduplicated code references from retrieved context.
+
+    Returns (references, marker) where marker is an HTML comment carrying the
+    same references. The marker is appended to the persisted chat message so
+    source chips survive session reloads (ReactMarkdown drops HTML comments).
+    """
+    refs: list[dict] = []
+    seen: set[tuple[str, int]] = set()
+    for chunk in context_chunks:
+        key = (chunk["file_path"], chunk["start_line"])
+        if key in seen:
+            continue
+        seen.add(key)
+        refs.append({
+            "file_path": chunk["file_path"],
+            "symbol_name": chunk["symbol_name"],
+            "symbol_kind": chunk["symbol_kind"],
+            "start_line": chunk["start_line"],
+            "end_line": chunk["end_line"],
+        })
+        if len(refs) >= max_refs:
+            break
+
+    marker = f"<!--refs:{json.dumps(refs)}-->" if refs else ""
+    return refs, marker
+
+
 def _build_system_prompt(
     repo_name: str, context_chunks: list[dict], impact_chunks: list[dict] | None = None
 ) -> str:
@@ -221,15 +252,17 @@ async def stream_rag_response(
     repo_id: uuid.UUID,
     session_id: uuid.UUID,
     user_message: str,
-) -> AsyncGenerator[str, None]:
+) -> AsyncGenerator[tuple[str, str] | tuple[str, dict], None]:
     """Stream a RAG response for a user's question about a codebase.
 
-    Yields text chunks as they arrive from the LLM.
+    Yields (kind, payload) tuples:
+      ("refs", {"references": [...], "marker": "..."}) — emitted once, first
+      ("text", chunk) — LLM text chunks as they arrive
     """
     # 1. Get repo info
     repo = await db.get(Repository, repo_id)
     if not repo:
-        yield "Error: Repository not found."
+        yield "text", "Error: Repository not found."
         return
 
     # 2. Retrieve relevant code context
@@ -239,6 +272,11 @@ async def stream_rag_response(
     impact_chunks: list[dict] | None = None
     if context_chunks and _is_impact_question(user_message):
         impact_chunks = await _retrieve_dependents(db, repo_id, context_chunks)
+
+    # 2c. Extract code references for clickable source chips
+    refs, marker = _build_references(context_chunks)
+    if refs:
+        yield "refs", {"references": refs, "marker": marker}
 
     if not context_chunks:
         logger.warning(
@@ -279,8 +317,8 @@ async def stream_rag_response(
 
         async for chunk in stream:
             if chunk.choices and chunk.choices[0].delta.content:
-                yield chunk.choices[0].delta.content
+                yield "text", chunk.choices[0].delta.content
 
     except Exception as e:
         logger.exception("LLM streaming failed")
-        yield f"\n\nError: Failed to get response from LLM: {e}"
+        yield "text", f"\n\nError: Failed to get response from LLM: {e}"
