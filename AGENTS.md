@@ -5,7 +5,7 @@ Guidance for AI coding agents working in this repository.
 ## Project Overview
 
 `codebase-intelligence` — a monorepo for a codebase analysis/intelligence tool.
-Connect a GitHub repo, index its source code with tree-sitter, search it semantically (pgvector), and chat about it (RAG + LLM).
+Connect a GitHub repo, index its source code with tree-sitter, search it semantically (pgvector), and **chat about it** (RAG + LLM). The AI chat is the primary user experience — the code browser is a secondary, on-demand panel.
 
 - **`backend/`** — Python 3.13 FastAPI API, managed with [uv](https://docs.astral.sh/uv/)
 - **`frontend/`** — Next.js 16 (App Router, TypeScript, Tailwind CSS 4, Turbopack), managed with [bun](https://bun.sh/)
@@ -13,12 +13,12 @@ Connect a GitHub repo, index its source code with tree-sitter, search it semanti
 ## Architecture
 
 ```
-Next.js (Dashboard, Repo Browser, Code Viewer, AI Chat, Search, Auth)
+Next.js (AI Chat [main view], Code Browser [on-demand panel], Dashboard, Search, Auth)
         │
         ▼
 FastAPI (repos CRUD, indexing trigger, file tree/content, semantic search, SSE chat, Auth)
         │
-        ├── Tree-sitter (symbol extraction: functions/classes/methods + imports/calls/inheritance)
+        ├── Tree-sitter (symbol extraction across 11 languages + imports/calls/inheritance)
         ├── NVIDIA nemotron-3-embed-1b (embeddings, 2048 dims)
         ├── OpenAI-compatible chat API (vcliproxy — deepseek-v4-flash-free)
         └── SQLAlchemy async → PostgreSQL + pgvector (embeddings in `code_embeddings`)
@@ -33,7 +33,7 @@ FastAPI (repos CRUD, indexing trigger, file tree/content, semantic search, SSE c
 | ORM models (repos, files, symbols, embeddings, chat, dependencies, generated_docs) | **Done** — 8 tables |
 | Alembic migrations (3 applied: initial + deps/docs + embedding dim) | **Done** |
 | Pydantic schemas + all 9 routers | **Done** |
-| `services/github.py` (clone/pull/walk files) | **Done** |
+| `services/github.py` (clone/pull/walk files — indexes all text files, skips binaries) | **Done** |
 | `services/parser.py` (tree-sitter: symbols + imports/calls/inheritance across 11 languages) | **Done** |
 | `services/embeddings.py` (NVIDIA nemotron-3-embed-1b, 2048 dims, retry w/ backoff) | **Done** |
 | `services/indexer.py` (clone→parse→embed→store + dependency resolution) | **Done** |
@@ -42,7 +42,10 @@ FastAPI (repos CRUD, indexing trigger, file tree/content, semantic search, SSE c
 | `services/diffs.py` (git commit history + LLM diff analysis) | **Done** |
 | `services/docs.py` (LLM doc generation + caching) | **Done** |
 | Frontend (dashboard, browser, viewer, chat, search, login) | **Done** — builds clean |
+| Frontend chat-first layout (chat is main view, code browser is on-demand right panel) | **Done** |
+| Frontend chat markdown rendering (ReactMarkdown + remark-gfm + shiki syntax highlighting) | **Done** |
 | Frontend Phase 2 (dependency graph, commit list, generated docs) | **Done** |
+| Auth hardening (token validation on mount, 401 auto-redirect via `authFetch`) | **Done** |
 | Production deployment (Vercel frontend + systemd backend on 8001 + nginx) | **Done** — see "Production" below |
 | End-to-end testing (index a real repo, verify all endpoints) | **TODO** |
 
@@ -186,12 +189,24 @@ bun run start                 # Serve production build
 │       └── services/         # github, parser, embeddings, indexer, search, rag, diffs, docs
 └── frontend/                 # Next.js app (bun)
     ├── src/
-    │   ├── app/              # App Router pages (dashboard, repo/[id], login)
-    │   ├── components/       # UI components (file-tree, code-viewer, chat-panel, search-bar,
+    │   ├── app/              # App Router pages (dashboard, repos/[id], login)
+    │   ├── components/       # UI components (chat-panel, file-tree, code-viewer, search-bar,
     │   │                     #   dependency-graph, commit-list, generated-docs, repo-card, etc.)
-    │   └── lib/api.ts        # Typed API client for all backend endpoints
+    │   └── lib/api.ts        # Typed API client for all backend endpoints (authFetch, SSE parsing)
     └── package.json
 ```
+
+## Chat-First UI
+
+The AI chat is the **primary experience** of this app, not the code browser.
+
+- On `repos/[id]`, `<ChatPanel>` fills the main center area and is always visible.
+- The code browser (file tree, code viewer, graph, commits, README) lives in a slide-in right panel (`w-[55%]`, max 900px), **hidden by default**. It opens on demand:
+  - The "Code" toggle button in the header
+  - Selecting a search result
+  - A URL `?file=`/`?line=` param
+- Chat messages render **markdown** (ReactMarkdown + remark-gfm) with shiki-syntax-highlighted fenced code blocks. Code blocks inside chat messages use the `.chat-code-block` CSS class and must **not** include line numbers.
+- The repo page header keeps: back arrow, repo name/branch, semantic search bar, and the Code toggle. The old "Chat toggle" sidebar behavior no longer exists.
 
 ## Key Conventions
 
@@ -209,3 +224,5 @@ bun run start                 # Serve production build
 - **Embedding retries**: `services/embeddings.py` retries API calls with exponential backoff (5 attempts, batch size 50) to survive NVIDIA rate limits
 - **Git operations**: `clone_repo` / `walk_source_files` run inside `asyncio.to_thread()` in the indexer — never call them directly from async code
 - **Status enum**: `pending → cloning → indexing → ready` (or `error`), surfaced via `GET /api/repos/{id}/index/status`
+- **Auth**: all API calls go through `authFetch` in `frontend/src/lib/api.ts` — it redirects to `/login` on any 401 (except on the login page itself). `AuthGuard` validates the token against the backend on mount before rendering children. Never use raw `fetch` for backend calls.
+- **Frontend fetch**: `getToken()`/`setToken()`/`clearAuth()` manage the `auth_token` in `localStorage`; `authHeaders()` attaches the Bearer token. `login()`/`logout()` deliberately bypass `authFetch` since they manage auth state themselves.
