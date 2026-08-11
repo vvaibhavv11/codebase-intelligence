@@ -44,6 +44,7 @@ FastAPI (repos CRUD, indexing trigger, file tree/content, semantic search, SSE c
 | Frontend (dashboard, browser, viewer, chat, search, login) | **Done** — builds clean |
 | Frontend chat-first layout (chat is main view, code browser is on-demand right panel) | **Done** |
 | Frontend chat markdown rendering (ReactMarkdown + remark-gfm + shiki syntax highlighting) | **Done** |
+| Clickable source chips in chat (AI answer → open referenced function in code panel) | **Done** |
 | Frontend Phase 2 (dependency graph, commit list, generated docs) | **Done** |
 | Auth hardening (token validation on mount, 401 auto-redirect via `authFetch`) | **Done** |
 | Production deployment (Vercel frontend + systemd backend on 8001 + nginx) | **Done** — see "Production" below |
@@ -206,6 +207,7 @@ The AI chat is the **primary experience** of this app, not the code browser.
   - Selecting a search result
   - A URL `?file=`/`?line=` param
 - Chat messages render **markdown** (ReactMarkdown + remark-gfm) with shiki-syntax-highlighted fenced code blocks. Code blocks inside chat messages use the `.chat-code-block` CSS class and must **not** include line numbers.
+- Each AI reply shows **clickable source chips** under the message (one per retrieved symbol: `symbol_name · path/file.py:line`). Clicking a chip calls the `onOpenFile` prop → `navigateToFile()` in the repo page, opening the code panel scrolled to that function with a shareable `?file=`/`?line=` URL. Chips come from the RAG-retrieved context (`event: references`), not from parsing the LLM text — so they're always accurate. Chips survive session reloads via a `<!--refs:{json}-->` marker appended to the persisted assistant message.
 - The repo page header keeps: back arrow, repo name/branch, semantic search bar, and the Code toggle. The old "Chat toggle" sidebar behavior no longer exists.
 
 ## Key Conventions
@@ -218,7 +220,7 @@ The AI chat is the **primary experience** of this app, not the code browser.
 - **Database**: PostgreSQL + pgvector only (Docker Compose); use Alembic for all schema changes — never hand-edit tables
 - **LLM chat**: OpenAI-compatible endpoint configured via `OPENAI_API_BASE`/`OPENAI_API_KEY` in `.env`
 - **Embeddings**: separate NVIDIA endpoint via `OPENAI_EMBEDDING_BASE`/`OPENAI_EMBEDDING_API_KEY` — 2048-dim vectors, cosine distance (`<=>`) for search, no ANN index
-- **Streaming**: chat responses stream via SSE (`text/event-stream`); each `data:` payload is **JSON-encoded** (`{"text": "..."}`), errors use `event: error`, completion uses `event: done` — the frontend (`lib/api.ts`) JSON-parses every event
+- **Streaming**: chat responses stream via SSE (`text/event-stream`); each `data:` payload is **JSON-encoded** (`{"text": "..."}`), errors use `event: error`, completion uses `event: done`. Additionally `stream_rag_response` (`services/rag.py`) yields `("refs", {"references": [...], "marker": "..."})` first, forwarded by the router as `event: references` (`{"references": [...]}`) — the frontend (`lib/api.ts`) JSON-parses every event and `streamChat` takes an `onReferences` callback
 - **CORS**: `FRONTEND_URL` in `.env` is a **comma-separated list** of allowed origins (e.g. `http://localhost:3000,https://codebase-intelligence-jet.vercel.app`)
 - **Indexing runs as a FastAPI BackgroundTask** with its own DB session (`async_session`) — never reuse request-scoped sessions; the error handler calls `db.rollback()` before setting `status=error`
 - **Embedding retries**: `services/embeddings.py` retries API calls with exponential backoff (5 attempts, batch size 50) to survive NVIDIA rate limits
