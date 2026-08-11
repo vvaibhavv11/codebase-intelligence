@@ -20,6 +20,33 @@ SUPPORTED_EXTENSIONS: dict[str, str] = {
     ".tsx": "typescript",
     ".mjs": "javascript",
     ".mts": "typescript",
+    ".rs": "rust",
+    ".go": "go",
+    ".java": "java",
+    ".c": "c",
+    ".h": "c",
+    ".cc": "cpp",
+    ".cpp": "cpp",
+    ".cxx": "cpp",
+    ".hpp": "cpp",
+    ".hh": "cpp",
+    ".hxx": "cpp",
+    ".cs": "csharp",
+    ".rb": "ruby",
+    ".php": "php",
+    ".phtml": "php",
+}
+
+# Binary / non-text extensions — never indexed (browsable tree only shows text files)
+SKIP_EXTENSIONS = {
+    ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".webp", ".bmp",
+    ".woff", ".woff2", ".ttf", ".eot", ".otf",
+    ".zip", ".gz", ".tar", ".xz", ".bz2", ".7z", ".rar",
+    ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".pptx",
+    ".mp3", ".mp4", ".wav", ".ogg", ".flac", ".webm",
+    ".exe", ".dll", ".so", ".dylib", ".a", ".o", ".obj",
+    ".class", ".jar", ".wasm", ".pyc", ".pyo",
+    ".lock", ".woff2", ".map",
 }
 
 # Directories to skip
@@ -84,7 +111,11 @@ def get_default_branch(repo_dir: Path) -> str:
 
 
 def walk_source_files(repo_dir: Path) -> list[dict]:
-    """Walk the repo and return all supported source files.
+    """Walk the repo and return all text files.
+
+    Files with a supported extension get their language (python/javascript/
+    typescript/rust) so tree-sitter can parse them; everything else is stored
+    with language "text" so the file tree and code viewer work for any file.
 
     Returns a list of dicts with keys: path (relative), language, content.
     """
@@ -102,7 +133,7 @@ def walk_source_files(repo_dir: Path) -> list[dict]:
 
         # Check extension
         ext = file_path.suffix.lower()
-        if ext not in SUPPORTED_EXTENSIONS:
+        if ext in SKIP_EXTENSIONS:
             continue
 
         # Check file size
@@ -112,16 +143,24 @@ def walk_source_files(repo_dir: Path) -> list[dict]:
 
         # Read content
         try:
-            content = file_path.read_text(encoding="utf-8", errors="replace")
+            # Sniff for binary content before reading the whole file
+            with open(file_path, "rb") as f:
+                head = f.read(8192)
+            if b"\x00" in head:
+                logger.warning(f"Skipping {rel}: binary file")
+                continue
+            content = head.decode("utf-8", errors="replace")
+            if file_path.stat().st_size > 8192:
+                content = file_path.read_text(encoding="utf-8", errors="replace")
         except Exception as e:
             logger.warning(f"Skipping {rel}: {e}")
             continue
 
         files.append({
             "path": str(rel),
-            "language": SUPPORTED_EXTENSIONS[ext],
+            "language": SUPPORTED_EXTENSIONS.get(ext, "text"),
             "content": content,
         })
 
-    logger.info(f"Found {len(files)} source files in {repo_dir}")
+    logger.info(f"Found {len(files)} text files in {repo_dir}")
     return files

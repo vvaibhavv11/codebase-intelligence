@@ -10,8 +10,8 @@ router = APIRouter(tags=["indexing"])
 
 @router.post("/repos/{repo_id}/index")
 async def trigger_index(
+    background_tasks: BackgroundTasks,
     repo: Repository = Depends(require_repo),
-    background_tasks: BackgroundTasks = BackgroundTasks(),
 ):
     repo_id = repo.id
     if repo.status in (RepoStatus.cloning, RepoStatus.indexing):

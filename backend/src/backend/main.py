@@ -1,3 +1,4 @@
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -6,6 +7,12 @@ from sqlalchemy import text
 
 from backend.config import settings
 from backend.db import engine
+
+# Configure logging so all INFO+ messages are visible in journalctl / stdout
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(levelname)s:%(name)s:%(message)s",
+)
 
 
 @asynccontextmanager

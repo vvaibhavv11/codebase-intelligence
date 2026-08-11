@@ -37,12 +37,15 @@ async def run_indexing(repo_id: uuid.UUID) -> None:
     request lifecycle.
     """
     logger.info("run_indexing: starting for repo %s", repo_id)
+    print(f"[INDEXER] run_indexing: starting for repo {repo_id}", flush=True)
     async with async_session() as db:
         try:
             await _do_indexing(db, repo_id)
             logger.info("run_indexing: done for repo %s", repo_id)
+            print(f"[INDEXER] run_indexing: done for repo {repo_id}", flush=True)
         except Exception as e:
             logger.exception(f"Indexing failed for repo {repo_id}")
+            print(f"[INDEXER] Indexing FAILED for repo {repo_id}: {e}", flush=True)
             # Rollback any dirty state before setting error status
             await db.rollback()
             # Update status to error
@@ -58,21 +61,25 @@ async def _do_indexing(db: AsyncSession, repo_id: uuid.UUID) -> None:
     repo = await db.get(Repository, repo_id)
     if not repo:
         logger.warning("_do_indexing: repo %s not found", repo_id)
+        print(f"[INDEXER] repo {repo_id} not found in DB", flush=True)
         return
 
     if repo.status in (RepoStatus.cloning, RepoStatus.indexing):
         logger.info("_do_indexing: index already in progress for repo %s", repo_id)
+        print(f"[INDEXER] SKIPPED: status={repo.status} for repo {repo_id}", flush=True)
         return
 
     # Step 1: Clone
     repo.status = RepoStatus.cloning
     await db.commit()
     logger.info("_do_indexing: status=cloning committed for repo %s", repo_id)
+    print(f"[INDEXER] status=cloning committed for {repo_id}", flush=True)
 
     repo_dir = await asyncio.to_thread(
         clone_repo, repo.github_url, repo.owner, repo.name, repo.user_id
     )
     logger.info("_do_indexing: cloned to %s", repo_dir)
+    print(f"[INDEXER] cloned to {repo_dir} (exists={repo_dir.exists()})", flush=True)
     repo.default_branch = await asyncio.to_thread(get_default_branch, repo_dir)
 
     # Step 2: Index
@@ -84,6 +91,7 @@ async def _do_indexing(db: AsyncSession, repo_id: uuid.UUID) -> None:
 
     # Step 3: Walk and parse files
     source_files = await asyncio.to_thread(walk_source_files, repo_dir)
+    print(f"[INDEXER] walk_source_files returned {len(source_files)} files", flush=True)
     all_symbols_for_embedding: list[
         tuple[CodeSymbol, str, str]
     ] = []  # (symbol_db_obj, prepared_text, file_path)
@@ -161,6 +169,7 @@ async def _do_indexing(db: AsyncSession, repo_id: uuid.UUID) -> None:
                 )
 
     await db.commit()
+    print(f"[INDEXER] committed {len(source_files)} files, {len(all_symbols_for_embedding)} symbols", flush=True)
 
     # Step 4: Generate embeddings in batches
     if all_symbols_for_embedding:
@@ -191,6 +200,11 @@ async def _do_indexing(db: AsyncSession, repo_id: uuid.UUID) -> None:
     repo.indexed_at = datetime.now(timezone.utc)
     await db.commit()
 
+    print(
+        f"[INDEXER] COMPLETE {repo.owner}/{repo.name}: "
+        f"{len(source_files)} files, {len(all_symbols_for_embedding)} symbols",
+        flush=True,
+    )
     logger.info(
         "Indexing complete for %s/%s: %d files, %d symbols",
         repo.owner,

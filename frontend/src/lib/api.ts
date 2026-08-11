@@ -35,6 +35,41 @@ function authHeaders(extra?: Record<string, string>): Record<string, string> {
   return headers;
 }
 
+/**
+ * Wrapper around fetch() that intercepts 401 responses.
+ * When the backend returns 401 (invalid/expired token), this clears the
+ * stored auth and redirects to /login so the user doesn't see a broken page.
+ *
+ * NOTE: login() and logout() intentionally bypass this wrapper since they
+ * handle auth state themselves.
+ */
+async function authFetch(
+  input: RequestInfo | URL,
+  init?: RequestInit
+): Promise<Response> {
+  const res = await fetch(input, init);
+  if (
+    res.status === 401 &&
+    typeof window !== "undefined" &&
+    !window.location.pathname.startsWith("/login")
+  ) {
+    clearAuth();
+    window.location.href = "/login";
+    // Return the response but the redirect will fire before callers can act
+    return res;
+  }
+  return res;
+}
+
+/** Validates the current token against the backend. Returns the user if valid. */
+export async function getCurrentUser(): Promise<AuthUser> {
+  const res = await authFetch(`${API_URL}/api/auth/me`, {
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error("Not authenticated");
+  return res.json();
+}
+
 export async function login(
   username: string,
   password: string
@@ -194,14 +229,14 @@ export interface GeneratedDoc {
 // ── Repos ────────────────────────────────────────────────────────────────────
 
 export async function listRepos(): Promise<Repo[]> {
-  const res = await fetch(`${API_URL}/api/repos`, { headers: authHeaders() });
+  const res = await authFetch(`${API_URL}/api/repos`, { headers: authHeaders() });
   if (!res.ok) throw new Error("Failed to fetch repos");
   const data = await res.json();
   return data.repositories;
 }
 
 export async function connectRepo(githubUrl: string): Promise<Repo> {
-  const res = await fetch(`${API_URL}/api/repos`, {
+  const res = await authFetch(`${API_URL}/api/repos`, {
     method: "POST",
     headers: authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({ github_url: githubUrl }),
@@ -214,7 +249,7 @@ export async function connectRepo(githubUrl: string): Promise<Repo> {
 }
 
 export async function getRepo(repoId: string): Promise<Repo> {
-  const res = await fetch(`${API_URL}/api/repos/${repoId}`, {
+  const res = await authFetch(`${API_URL}/api/repos/${repoId}`, {
     headers: authHeaders(),
   });
   if (!res.ok) throw new Error("Failed to fetch repo");
@@ -222,7 +257,7 @@ export async function getRepo(repoId: string): Promise<Repo> {
 }
 
 export async function deleteRepo(repoId: string): Promise<void> {
-  const res = await fetch(`${API_URL}/api/repos/${repoId}`, {
+  const res = await authFetch(`${API_URL}/api/repos/${repoId}`, {
     method: "DELETE",
     headers: authHeaders(),
   });
@@ -230,7 +265,7 @@ export async function deleteRepo(repoId: string): Promise<void> {
 }
 
 export async function triggerIndex(repoId: string): Promise<void> {
-  const res = await fetch(`${API_URL}/api/repos/${repoId}/index`, {
+  const res = await authFetch(`${API_URL}/api/repos/${repoId}/index`, {
     method: "POST",
     headers: authHeaders(),
   });
@@ -240,7 +275,7 @@ export async function triggerIndex(repoId: string): Promise<void> {
 export async function getRepoStatus(
   repoId: string
 ): Promise<{ repo_id: string; status: string; error_message: string | null; indexed_at: string | null }> {
-  const res = await fetch(`${API_URL}/api/repos/${repoId}/index/status`, {
+  const res = await authFetch(`${API_URL}/api/repos/${repoId}/index/status`, {
     headers: authHeaders(),
   });
   if (!res.ok) throw new Error("Failed to get repo status");
@@ -250,7 +285,7 @@ export async function getRepoStatus(
 // ── File tree ────────────────────────────────────────────────────────────────
 
 export async function getFileTree(repoId: string): Promise<FileTreeNode[]> {
-  const res = await fetch(`${API_URL}/api/repos/${repoId}/tree`, {
+  const res = await authFetch(`${API_URL}/api/repos/${repoId}/tree`, {
     headers: authHeaders(),
   });
   if (!res.ok) throw new Error("Failed to fetch file tree");
@@ -261,7 +296,7 @@ export async function getFileContent(
   repoId: string,
   path: string
 ): Promise<FileContent> {
-  const res = await fetch(`${API_URL}/api/repos/${repoId}/files/${path}`, {
+  const res = await authFetch(`${API_URL}/api/repos/${repoId}/files/${path}`, {
     headers: authHeaders(),
   });
   if (!res.ok) throw new Error("Failed to fetch file content");
@@ -275,7 +310,7 @@ export async function semanticSearch(
   query: string,
   limit = 10
 ): Promise<SearchResult[]> {
-  const res = await fetch(
+  const res = await authFetch(
     `${API_URL}/api/search?q=${encodeURIComponent(query)}&repo_id=${repoId}&limit=${limit}`,
     { headers: authHeaders() }
   );
@@ -287,7 +322,7 @@ export async function semanticSearch(
 // ── Dependency graph ────────────────────────────────────────────────────────
 
 export async function getDependencyGraph(repoId: string): Promise<GraphData> {
-  const res = await fetch(`${API_URL}/api/repos/${repoId}/graph`, {
+  const res = await authFetch(`${API_URL}/api/repos/${repoId}/graph`, {
     headers: authHeaders(),
   });
   if (!res.ok) throw new Error("Failed to fetch dependency graph");
@@ -298,7 +333,7 @@ export async function getDependents(
   repoId: string,
   symbolId: string
 ): Promise<GraphNode[]> {
-  const res = await fetch(
+  const res = await authFetch(
     `${API_URL}/api/repos/${repoId}/symbols/${symbolId}/dependents`,
     { headers: authHeaders() }
   );
@@ -312,7 +347,7 @@ export async function getCommits(
   repoId: string,
   limit = 50
 ): Promise<CommitSummary[]> {
-  const res = await fetch(
+  const res = await authFetch(
     `${API_URL}/api/repos/${repoId}/commits?limit=${limit}`,
     { headers: authHeaders() }
   );
@@ -324,7 +359,7 @@ export async function getCommitDiff(
   repoId: string,
   sha: string
 ): Promise<CommitDiff> {
-  const res = await fetch(`${API_URL}/api/repos/${repoId}/commits/${sha}`, {
+  const res = await authFetch(`${API_URL}/api/repos/${repoId}/commits/${sha}`, {
     headers: authHeaders(),
   });
   if (!res.ok) throw new Error("Failed to fetch commit diff");
@@ -340,7 +375,7 @@ export async function streamDiffAnalysis(
   signal?: AbortSignal,
   onError?: (message: string) => void
 ): Promise<void> {
-  const res = await fetch(`${API_URL}/api/repos/${repoId}/diff/analyze`, {
+  const res = await authFetch(`${API_URL}/api/repos/${repoId}/diff/analyze`, {
     method: "POST",
     headers: authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({ commit_sha: commitSha, file_path: filePath }),
@@ -392,7 +427,7 @@ export async function streamDiffAnalysis(
 // ── Generated docs ──────────────────────────────────────────────────────────
 
 export async function generateReadme(repoId: string): Promise<GeneratedDoc> {
-  const res = await fetch(`${API_URL}/api/repos/${repoId}/docs/readme`, {
+  const res = await authFetch(`${API_URL}/api/repos/${repoId}/docs/readme`, {
     method: "POST",
     headers: authHeaders(),
   });
@@ -404,7 +439,7 @@ export async function generateReadme(repoId: string): Promise<GeneratedDoc> {
 }
 
 export async function generateSymbolDoc(symbolId: string): Promise<GeneratedDoc> {
-  const res = await fetch(`${API_URL}/api/symbols/${symbolId}/doc`, {
+  const res = await authFetch(`${API_URL}/api/symbols/${symbolId}/doc`, {
     method: "POST",
     headers: authHeaders(),
   });
@@ -416,7 +451,7 @@ export async function generateSymbolDoc(symbolId: string): Promise<GeneratedDoc>
 }
 
 export async function getRepoDocs(repoId: string): Promise<GeneratedDoc[]> {
-  const res = await fetch(`${API_URL}/api/repos/${repoId}/docs`, {
+  const res = await authFetch(`${API_URL}/api/repos/${repoId}/docs`, {
     headers: authHeaders(),
   });
   if (!res.ok) throw new Error("Failed to fetch docs");
@@ -427,7 +462,7 @@ export async function getRepoDocs(repoId: string): Promise<GeneratedDoc[]> {
 // ── Chat ─────────────────────────────────────────────────────────────────────
 
 export async function getSessions(repoId: string): Promise<ChatSession[]> {
-  const res = await fetch(
+  const res = await authFetch(
     `${API_URL}/api/chat/sessions?repo_id=${repoId}`,
     { headers: authHeaders() }
   );
@@ -437,7 +472,7 @@ export async function getSessions(repoId: string): Promise<ChatSession[]> {
 }
 
 export async function getSession(sessionId: string): Promise<ChatSession> {
-  const res = await fetch(`${API_URL}/api/chat/sessions/${sessionId}`, {
+  const res = await authFetch(`${API_URL}/api/chat/sessions/${sessionId}`, {
     headers: authHeaders(),
   });
   if (!res.ok) throw new Error("Failed to fetch session");
@@ -453,7 +488,7 @@ export async function streamChat(
   signal?: AbortSignal,
   onError?: (message: string) => void
 ): Promise<void> {
-  const res = await fetch(`${API_URL}/api/chat`, {
+  const res = await authFetch(`${API_URL}/api/chat`, {
     method: "POST",
     headers: authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({

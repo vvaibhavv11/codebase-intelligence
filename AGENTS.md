@@ -34,7 +34,7 @@ FastAPI (repos CRUD, indexing trigger, file tree/content, semantic search, SSE c
 | Alembic migrations (3 applied: initial + deps/docs + embedding dim) | **Done** |
 | Pydantic schemas + all 9 routers | **Done** |
 | `services/github.py` (clone/pull/walk files) | **Done** |
-| `services/parser.py` (tree-sitter: symbols + imports/calls/inheritance) | **Done** |
+| `services/parser.py` (tree-sitter: symbols + imports/calls/inheritance across 11 languages) | **Done** |
 | `services/embeddings.py` (NVIDIA nemotron-3-embed-1b, 2048 dims, retry w/ backoff) | **Done** |
 | `services/indexer.py` (clone→parse→embed→store + dependency resolution) | **Done** |
 | `services/search.py` (pgvector cosine similarity) | **Done** |
@@ -114,7 +114,7 @@ Detailed, sequential implementation instructions live in `docs/steps/`:
 | Guide | Covers | Status |
 |---|---|---|
 | `01-infrastructure.md` | Docker, deps, config, models, routers, migrations | **Done** |
-| `02-tree-sitter-parsing.md` | `services/parser.py` — symbol extraction for Python/JS/TS | **Done** |
+| `02-tree-sitter-parsing.md` | `services/parser.py` — symbol extraction for 11 languages (Python, JS, TS, Rust, Go, Java, C, C++, C#, Ruby, PHP) | **Done** |
 | `03-embeddings-and-indexing.md` | `services/embeddings.py` + `services/indexer.py` | **Done** |
 | `04-semantic-search.md` | `services/search.py` — pgvector cosine similarity | **Done** |
 | `05-rag-chat.md` | `services/rag.py` — retrieval + LLM streaming | **Done** |
