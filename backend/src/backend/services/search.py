@@ -15,7 +15,9 @@ from backend.services.embeddings import get_embedding
 logger = logging.getLogger(__name__)
 
 # Results with cosine similarity below this threshold are filtered out.
-MIN_SIMILARITY = 0.3
+# Nemotron embeddings score relevant matches ~0.35-0.45 and loose but
+# useful matches ~0.15-0.3; the noise floor is ~0.06-0.1.
+MIN_SIMILARITY = 0.15
 
 
 def _truncate_source(source: str, max_lines: int = 15) -> str:

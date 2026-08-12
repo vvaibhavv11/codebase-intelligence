@@ -42,10 +42,38 @@ _IMPACT_KEYWORDS = (
     "refactor",
 )
 
+# High-level questions about the whole project (symbol search won't retrieve
+# anything relevant for these — fall back to repo-level context instead).
+_OVERVIEW_KEYWORDS = (
+    "what does this project do",
+    "what does this repo do",
+    "what is this project",
+    "what is this repo",
+    "what's this project",
+    "whats this project",
+    "about this project",
+    "about this repo",
+    "project overview",
+    "repo overview",
+    "describe this project",
+    "describe this repo",
+    "what is the purpose",
+    "high level",
+    "architecture",
+    "overview",
+    "readme",
+    "getting started",
+)
+
 
 def _is_impact_question(message: str) -> bool:
     lower = message.lower()
     return any(k in lower for k in _IMPACT_KEYWORDS)
+
+
+def _is_overview_question(message: str) -> bool:
+    lower = message.lower()
+    return any(k in lower for k in _OVERVIEW_KEYWORDS)
 
 
 # ---------------------------------------------------------------------------
@@ -141,6 +169,68 @@ async def _retrieve_dependents(
     return sorted(by_id.values(), key=lambda c: c["dependents"], reverse=True)[:max_chunks]
 
 
+async def _build_repo_overview(
+    db: AsyncSession,
+    repo: Repository,
+    max_readme_chars: int = 6000,
+    max_files: int = 40,
+) -> str | None:
+    """Build a repository-level overview: README + file/language summary.
+
+    Used for high-level questions ("what does this project do") where
+    symbol-level retrieval finds nothing relevant. The README (and other
+    docs) are stored in ``files`` during indexing but never embedded, so
+    this reads them directly from the DB.
+    """
+    files_result = await db.execute(
+        select(File.path, File.language)
+        .where(File.repo_id == repo.id)
+        .order_by(File.path)
+    )
+    files = files_result.all()
+    if not files:
+        return None
+
+    root_readme = next(
+        (
+            f.path
+            for f in files
+            if f.path.lower().endswith("readme.md") and "/" not in f.path.rstrip("/")
+        ),
+        None,
+    )
+    readme_text = ""
+    if root_readme:
+        readme_result = await db.execute(
+            select(File.content).where(
+                File.repo_id == repo.id, File.path == root_readme
+            )
+        )
+        readme_text = (readme_result.scalar_one_or_none() or "")[:max_readme_chars]
+
+    lang_counts: dict[str, int] = {}
+    for _, lang in files:
+        lang_counts[lang or "other"] = lang_counts.get(lang or "other", 0) + 1
+    lang_summary = ", ".join(
+        f"{lang} ({count})"
+        for lang, count in sorted(lang_counts.items(), key=lambda x: -x[1])[:8]
+    )
+
+    paths = "\n".join(f.path for f in files[:max_files])
+    if len(files) > max_files:
+        paths += f"\n... and {len(files) - max_files} more files"
+
+    parts = [
+        f"Repository: {repo.owner}/{repo.name}",
+        f"Files indexed: {len(files)}",
+        f"Languages: {lang_summary}",
+    ]
+    if readme_text:
+        parts.append(f"\nREADME (from {root_readme}):\n{readme_text}")
+    parts.append(f"\nFile tree (first {max_files} files):\n{paths}")
+    return "\n".join(parts)
+
+
 def _build_references(
     context_chunks: list[dict], max_refs: int = 8
 ) -> tuple[list[dict], str]:
@@ -172,7 +262,10 @@ def _build_references(
 
 
 def _build_system_prompt(
-    repo_name: str, context_chunks: list[dict], impact_chunks: list[dict] | None = None
+    repo_name: str,
+    context_chunks: list[dict],
+    impact_chunks: list[dict] | None = None,
+    repo_overview: str | None = None,
 ) -> str:
     """Build the system prompt with retrieved code context."""
     context_text = ""
@@ -207,6 +300,10 @@ def _build_system_prompt(
             "callers that would break or need changes."
         )
 
+    overview_section = ""
+    if repo_overview:
+        overview_section = "\n\n## Repository Overview\n" + repo_overview + "\n"
+
     return (
         f'You are a code intelligence assistant analyzing the repository "{repo_name}".\n'
         "\n"
@@ -217,6 +314,7 @@ def _build_system_prompt(
         "\n"
         "## Relevant Code Context\n"
         f"{context_text}"
+        f"{overview_section}"
         f"{impact_text}"
         f"{impact_instruction}"
     )
@@ -278,6 +376,13 @@ async def stream_rag_response(
     if refs:
         yield "refs", {"references": refs, "marker": marker}
 
+    # 2d. High-level questions ("what does this project do") and queries with
+    #     no retrieval hits get repo-level context (README + file list) so
+    #     the LLM is never left with zero source material.
+    repo_overview = None
+    if not context_chunks or _is_overview_question(user_message):
+        repo_overview = await _build_repo_overview(db, repo)
+
     if not context_chunks:
         logger.warning(
             "No relevant code found for query %r in repo %s",
@@ -289,7 +394,10 @@ async def stream_rag_response(
 
     # 3. Build messages array
     system_prompt = _build_system_prompt(
-        f"{repo.owner}/{repo.name}", context_chunks, impact_chunks
+        f"{repo.owner}/{repo.name}",
+        context_chunks,
+        impact_chunks,
+        repo_overview=repo_overview,
     )
     messages: list[dict] = [{"role": "system", "content": system_prompt}]
 
