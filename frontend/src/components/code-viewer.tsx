@@ -187,7 +187,7 @@ function SymbolKindBadge({ kind }: { kind: string }) {
   );
 }
 
-function normalizeLanguage(lang: string | null): string {
+export function normalizeLanguage(lang: string | null): string {
   if (!lang) return "text";
   const map: Record<string, string> = {
     typescript: "typescript",

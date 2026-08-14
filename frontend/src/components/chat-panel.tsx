@@ -24,6 +24,7 @@ import {
   type ChatSession,
   type ChatReference,
 } from "@/lib/api";
+import ReferencePopover from "@/components/reference-popover";
 
 interface ChatPanelProps {
   repoId: string;
@@ -205,6 +206,72 @@ export default function ChatPanel({ repoId, onOpenFile }: ChatPanelProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [hoveredRef, setHoveredRef] = useState<{
+    reference: ChatReference;
+    anchor: { left: number; top: number; width: number; height: number };
+  } | null>(null);
+  const openTimerRef = useRef<number | null>(null);
+  const closeTimerRef = useRef<number | null>(null);
+
+  const clearHoverTimers = useCallback(() => {
+    if (openTimerRef.current !== null) {
+      window.clearTimeout(openTimerRef.current);
+      openTimerRef.current = null;
+    }
+    if (closeTimerRef.current !== null) {
+      window.clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => () => clearHoverTimers(), [clearHoverTimers]);
+
+  const handleChipEnter = useCallback(
+    (reference: ChatReference, rect: DOMRect) => {
+      if (closeTimerRef.current !== null) {
+        window.clearTimeout(closeTimerRef.current);
+        closeTimerRef.current = null;
+      }
+      if (openTimerRef.current !== null) return;
+      openTimerRef.current = window.setTimeout(() => {
+        openTimerRef.current = null;
+        setHoveredRef({
+          reference,
+          anchor: {
+            left: rect.left,
+            top: rect.top,
+            width: rect.width,
+            height: rect.height,
+          },
+        });
+      }, 150);
+    },
+    []
+  );
+
+  const handleChipLeave = useCallback(() => {
+    if (openTimerRef.current !== null) {
+      window.clearTimeout(openTimerRef.current);
+      openTimerRef.current = null;
+    }
+    if (closeTimerRef.current !== null) return;
+    closeTimerRef.current = window.setTimeout(() => {
+      closeTimerRef.current = null;
+      setHoveredRef(null);
+    }, 200);
+  }, []);
+
+  const keepHoverOpen = useCallback(() => {
+    if (closeTimerRef.current !== null) {
+      window.clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
+  }, []);
+
+  const closeHover = useCallback(() => {
+    clearHoverTimers();
+    setHoveredRef(null);
+  }, [clearHoverTimers]);
 
   const refreshSessions = useCallback(() => {
     getSessions(repoId)
@@ -325,6 +392,7 @@ export default function ChatPanel({ repoId, onOpenFile }: ChatPanelProps) {
 
   function handleNewChat() {
     abortRef.current?.abort();
+    closeHover();
     setSessionId(null);
     setMessages([]);
     setInput("");
@@ -334,6 +402,7 @@ export default function ChatPanel({ repoId, onOpenFile }: ChatPanelProps) {
   async function handleSessionChange(id: string) {
     if (loading) return;
     setEditingId(null);
+    closeHover();
     setSessionId(id);
     if (id === "") {
       setMessages([]);
@@ -496,7 +565,7 @@ export default function ChatPanel({ repoId, onOpenFile }: ChatPanelProps) {
       {/* Main chat column */}
       <div className="flex flex-col flex-1 min-w-0">
         {/* Messages */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto" onScroll={closeHover}>
         {messages.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-center px-6">
             <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-blue-500/10 to-purple-500/10 dark:from-blue-500/20 dark:to-purple-500/20 flex items-center justify-center mb-5">
@@ -566,22 +635,33 @@ export default function ChatPanel({ repoId, onOpenFile }: ChatPanelProps) {
                       {m.references && m.references.length > 0 && (
                         <div className="flex flex-wrap gap-1.5 mt-2">
                           {m.references.map((ref, index) => (
-                            <button
+                            <div
                               key={`${ref.file_path}:${ref.start_line}:${index}`}
-                              onClick={() =>
-                                onOpenFile?.(ref.file_path, ref.start_line)
+                              className="inline-flex"
+                              onMouseEnter={(e) =>
+                                handleChipEnter(
+                                  ref,
+                                  e.currentTarget.getBoundingClientRect()
+                                )
                               }
-                              title={`View ${ref.symbol_name} in ${ref.file_path}`}
-                              className="flex items-center gap-1.5 rounded-full border border-blue-200 dark:border-blue-800 bg-blue-50/60 dark:bg-blue-950/30 px-2.5 py-1 text-xs font-mono text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/40 hover:border-blue-300 dark:hover:border-blue-700 transition-colors"
+                              onMouseLeave={handleChipLeave}
                             >
-                              <FileCode2 className="w-3 h-3 shrink-0" />
-                              <span className="font-semibold">
-                                {ref.symbol_name}
-                              </span>
-                              <span className="text-blue-400 dark:text-blue-500">
-                                {ref.file_path}:{ref.start_line}
-                              </span>
-                            </button>
+                              <button
+                                onClick={() => {
+                                  closeHover();
+                                  onOpenFile?.(ref.file_path, ref.start_line);
+                                }}
+                                className="flex items-center gap-1.5 rounded-full border border-blue-200 dark:border-blue-800 bg-blue-50/60 dark:bg-blue-950/30 px-2.5 py-1 text-xs font-mono text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/40 hover:border-blue-300 dark:hover:border-blue-700 transition-colors"
+                              >
+                                <FileCode2 className="w-3 h-3 shrink-0" />
+                                <span className="font-semibold">
+                                  {ref.symbol_name}
+                                </span>
+                                <span className="text-blue-400 dark:text-blue-500">
+                                  {ref.file_path}:{ref.start_line}
+                                </span>
+                              </button>
+                            </div>
                           ))}
                         </div>
                       )}
@@ -637,6 +717,21 @@ export default function ChatPanel({ repoId, onOpenFile }: ChatPanelProps) {
           </p>
         </div>
       </div>
+
+      {hoveredRef && (
+        <ReferencePopover
+          repoId={repoId}
+          reference={hoveredRef.reference}
+          anchor={hoveredRef.anchor}
+          onClose={closeHover}
+          onMouseEnter={keepHoverOpen}
+          onMouseLeave={handleChipLeave}
+          onOpenFile={(path, line) => {
+            closeHover();
+            onOpenFile?.(path, line);
+          }}
+        />
+      )}
       </div>
     </div>
   );

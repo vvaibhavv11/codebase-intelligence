@@ -86,10 +86,10 @@ sudo journalctl -u codebase-intelligence -f   # follow logs
 
 ```bash
 cd frontend
-vercel --prod --build-env NEXT_PUBLIC_API_URL=https://vuptime.duckdns.org
+vercel --prod --yes
 ```
 
-`NEXT_PUBLIC_API_URL` is baked in at build time. After any change to it, redeploy.
+`NEXT_PUBLIC_API_URL` is baked in at build time from the **project env var** (`NEXT_PUBLIC_API_URL=https://vuptime.duckdns.org`, set for Production via `vercel env add NEXT_PUBLIC_API_URL production`). Do NOT pass `--build-env NEXT_PUBLIC_API_URL=...` — the CLI rejects it with "Not authorized". After any change to the env var, redeploy.
 
 ### Production caveats
 
